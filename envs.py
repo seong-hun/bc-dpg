@@ -24,7 +24,6 @@ class Env(BaseEnv):
             systems_dict={
                 "main": self.system,
                 "r": BaseSystem(0, name="Integral reward"),
-                "dr": BaseSystem(0, name="Delayed integral reward"),
             },
             **kwargs
         )
@@ -49,7 +48,10 @@ class Env(BaseEnv):
 
         self.grad_u_phi_Q = jacob_analytic(self.phi_Q, i=1)
 
-        self.set_delay((self.system, self.systems_dict["Wu"]), T)
+        self.set_delay(
+            (self.system, self.systems_dict["Wu"], self.systems_dict["r"]),
+            T
+        )
 
     def reset(self):
         super().reset()
@@ -57,7 +59,35 @@ class Env(BaseEnv):
         return self.observation()
 
     def observation(self):
-        return self.observe_flat()
+        if self.delay.available():
+            x = self.system.state
+            Wu = self.systems_dict["Wu"].state
+
+            u = self.get_control(Wu, x)
+
+            tx = x - self.trim_x
+            tu = u - self.trim_u
+
+            self.delay.set_states(self.clock.get())
+
+            dx = self.system.d_state
+            dWu = self.systems_dict["Wu"].d_state
+
+            du = self.get_control(dWu, dx)
+
+            dtx = dx - self.trim_x
+            dtu = du - self.trim_u
+
+            tus = tu
+
+            del_phi = self.phi_Q(tx, tus) - self.phi_Q(dtx, dtu)
+            integral_reward = (
+                self.systems_dict["r"].state
+                - self.systems_dict["r"].d_state
+            )
+            return del_phi, integral_reward
+        else:
+            return None
 
     def step(self, action):
         done = self.clock.time_over()
@@ -83,13 +113,16 @@ class Env(BaseEnv):
         tx = x - self.trim_x
         tu = u - self.trim_u
 
-        u = self.system.saturation(u)
-
         self.system.dot = self.system.deriv(x, u)
         self.systems_dict["r"].dot = self.reward(tx, tu)
 
         if self.delay.available():
             self.delay.set_states(time)
+
+            if action is not None:
+                F, G = action
+            else:
+                F, G = 0, 0
 
             dx = self.system.d_state
             dWu = self.systems_dict["Wu"].d_state
@@ -99,7 +132,7 @@ class Env(BaseEnv):
 
             integral_reward = (
                 self.systems_dict["r"].state
-                - self.systems_dict["dr"].state
+                - self.systems_dict["r"].d_state
             )
 
             WQ = self.systems_dict["WQ"].state
@@ -111,20 +144,22 @@ class Env(BaseEnv):
             grad_u_phi_Q = self.grad_u_phi_Q(tx, tu)
             grad_Q = np.outer(phi_u, grad_u_phi_Q.T.dot(WQ))
 
-            self.systems_dict["dr"].dot = self.reward(dtx, dtu)
-            self.systems_dict["WQ"].dot = - 5e-3 * eQ * del_phi
+            self.systems_dict["WQ"].dot = (
+                - 5e-3 * eQ * del_phi
+                - 5e-3 * (np.dot(F, WQ) + G)
+            )
             self.systems_dict["Wu"].dot = - 5e-3 * grad_Q
 
             # print(np.abs(eQ * del_phi).max(), np.abs(grad_Q).max())
         else:
-            self.systems_dict["dr"].dot = 0
             self.systems_dict["WQ"].dot = np.zeros_like(
                 self.systems_dict["WQ"].state)
             self.systems_dict["Wu"].dot = np.zeros_like(
                 self.systems_dict["Wu"].state)
 
     def get_control(self, Wu, x):
-        return self.trim_u + Wu.T.dot(self.phi_u(x - self.trim_x))
+        del_u = Wu.T.dot(self.phi_u(x - self.trim_x))
+        return self.system.saturation(self.trim_u + del_u)
 
     def phi_Q(self, x, u, deg=2):
         return get_poly(np.hstack((x, u)), deg=deg)
