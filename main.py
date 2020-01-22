@@ -1,6 +1,7 @@
 import functools
 import itertools
 import numpy as np
+import numpy.linalg as nla
 from scipy.interpolate import interp1d
 
 import fym
@@ -9,6 +10,8 @@ import fym.agents.LQR
 import fym.logging as logging
 from fym.models.aircraft import MorphingLon
 from fym.utils.linearization import jacob_analytic
+
+np.random.seed(0)
 
 
 class Env(BaseEnv):
@@ -26,8 +29,6 @@ class Env(BaseEnv):
             **kwargs
         )
 
-        self.set_delay(self.systems, T)
-
         trim_x, trim_u = self.system.get_trim()
         self.trim_x = trim_x
         self.trim_u = trim_u
@@ -36,14 +37,19 @@ class Env(BaseEnv):
         phi_Q = self.phi_Q(x, np.zeros(4))
         phi_u = self.phi_u(x)
         self.append_systems({
-            "WQ": BaseSystem(np.zeros_like(phi_Q), name="Q weights"),
+            "WQ": BaseSystem(
+                0.05 * (np.random.random(phi_Q.shape) - 0.5),
+                name="Q weights"
+            ),
             "Wu": BaseSystem(
-                np.zeros(phi_u.shape + trim_u.shape),
+                0.05 * (np.random.random(phi_u.shape + trim_u.shape) - 0.5),
                 name="u weights"
             )
         })
 
         self.grad_u_phi_Q = jacob_analytic(self.phi_Q, i=1)
+
+        self.set_delay((self.system, self.systems_dict["Wu"]), T)
 
     def reset(self):
         super().reset()
@@ -119,8 +125,10 @@ class Env(BaseEnv):
             grad_Q = np.outer(phi_u, grad_u_phi_Q.T.dot(WQ))
 
             self.systems_dict["dr"].dot = self.reward(dx, du)
-            self.systems_dict["WQ"].dot = - 1e-2 * eQ * del_phi
-            self.systems_dict["Wu"].dot = - 1e-2 * grad_Q
+            self.systems_dict["WQ"].dot = - 5e-3 * eQ * del_phi
+            self.systems_dict["Wu"].dot = - 5e-3 * grad_Q
+
+            # print(nla.norm(eQ * del_phi), nla.norm(grad_Q))
         else:
             self.systems_dict["dr"].dot = 0
             self.systems_dict["WQ"].dot = np.zeros_like(
@@ -221,9 +229,12 @@ def plot(savepath):
 
 
 if __name__ == "__main__":
-    T = 0.5
-    env = Env([16, 0, 0, 0], T, dt=0.1, max_t=10, ode_step_len=4)
-    env.reset()
-    savepath = run(env)
-    plot(savepath)
-    # plot("data/tmp.h5")
+    # T = 0.5
+    # env = Env(
+    #     [16, 0, 0, 0], T, dt=0.1, max_t=10,
+    #     ode_step_len=4, odeint_option={},
+    # )
+    # env.reset()
+    # savepath = run(env)
+    # plot(savepath)
+    plot("data/tmp.h5")
