@@ -16,7 +16,7 @@ np.random.seed(1)
 
 class Env(BaseEnv):
     Q = np.diag([1, 100, 10, 100])
-    R = np.diag([10, 10, 1, 1])
+    R = np.diag([1, 1, 0.1, 0.1])
 
     def __init__(self, initial_state, T, **kwargs):
         self.system = MorphingLon(initial_state)
@@ -41,7 +41,7 @@ class Env(BaseEnv):
                 name="Q weights"
             ),
             "Wu": BaseSystem(
-                0.0 * (np.random.random(phi_u.shape + trim_u.shape) - 0.5),
+                0.3 * 2 * (np.random.random(phi_u.shape + trim_u.shape) - 0.5),
                 name="u weights"
             )
         })
@@ -65,21 +65,15 @@ class Env(BaseEnv):
         if self.delay.available():
             x, r, WQ, Wu = self.observe_list()
 
-            tx = x - self.trim_x
-
             time = self.clock.get()
             self.delay.set_states(time)
 
             dx, dWu, dr = self.observe_d_list()
             du = self.get_behavior(dWu, dx, time)
 
-            dtx = dx - self.trim_x
-            dtu = du - self.trim_u
-
             us = self.get_target(WQ, Wu, x)
-            tus = us - self.trim_u
 
-            del_phi = self.phi_Q(tx, tus) - self.phi_Q(dtx, dtu)
+            del_phi = self.phi_Q(x, us) - self.phi_Q(dx, du)
             integral_reward = r - dr
             return del_phi, integral_reward
         else:
@@ -90,7 +84,7 @@ class Env(BaseEnv):
         time = self.clock.get()
         x, _, WQ, Wu = self.observe_list()
         bu = self.get_behavior(Wu, x, time)
-        reward = self.reward(x - self.trim_x, bu - self.trim_u)
+        reward = self.reward(x, bu)
 
         F, G = action or (0, 0)
         td_error = nla.norm(np.dot(F, WQ) + G)
@@ -120,20 +114,19 @@ class Env(BaseEnv):
         the structure of ``phi_u`` which has no constant term. Also,
         the behavior policy should always be saturated by the control limits
         defined by the system."""
-        del_u = (Wu.T.dot(self.phi_u(x - self.trim_x))
+        del_u = (Wu.T.dot(self.phi_u(x))
                  + 0 * np.exp(-t / tau) * np.array(noise) * np.random.randn())
         return self.system.saturation(self.trim_u + del_u)
 
     def get_target(self, WQ, Wu, x):
-        del_u = Wu.T.dot(self.phi_u(x - self.trim_x))
+        del_u = Wu.T.dot(self.phi_u(x))
         return self.system.saturation(self.trim_u + del_u)
 
     def set_dot(self, time, action):
         x, r, WQ, Wu = self.observe_list()
         bu = self.get_behavior(Wu, x, time)
 
-        tx = x - self.trim_x
-        reward = self.reward(tx, bu - self.trim_u)
+        reward = self.reward(x, bu)
 
         if self.delay.available():
             self.delay.set_states(time)
@@ -144,26 +137,23 @@ class Env(BaseEnv):
 
             dx, dWu, dr = self.observe_d_list()
             dbu = self.get_behavior(dWu, dx, time)
-            dtx = dx - self.trim_x
-            dtbu = dbu - self.trim_u
 
             integral_reward = r - dr
 
-            phi_u = self.phi_u(tx)
+            phi_u = self.phi_u(x)
             us = self.get_target(WQ, Wu, x)
-            tus = us - self.trim_u
 
-            del_phi = self.phi_Q(tx, tus) - self.phi_Q(dtx, dtbu)
+            del_phi = self.phi_Q(x, us) - self.phi_Q(dx, dbu)
             eQ = WQ.dot(del_phi) + integral_reward
 
-            grad_u_phi_Q = self.grad_u_phi_Q(tx, tus)
+            grad_u_phi_Q = self.grad_u_phi_Q(x, us)
             grad_Q = np.outer(phi_u, grad_u_phi_Q.T.dot(WQ))
 
-            self.systems_dict["WQ"].dot = - 10 * (
-                eQ * del_phi
-                + 100 * (np.dot(F, WQ) + G)
+            self.systems_dict["WQ"].dot = (
+                - 200 * eQ * del_phi
+                - 200 * (np.dot(F, WQ) + G)
             )
-            self.systems_dict["Wu"].dot = - 10 * grad_Q
+            self.systems_dict["Wu"].dot = - 200 * grad_Q
         else:
             self.systems_dict["WQ"].dot = np.zeros_like(
                 self.systems_dict["WQ"].state)
@@ -174,13 +164,17 @@ class Env(BaseEnv):
         self.systems_dict["r"].dot = reward
 
     def phi_Q(self, x, u, deg=2):
-        n = len(get_poly(u, deg=2))
-        return get_poly(np.hstack((1, x, u)), deg=2)[1:-n]
+        # n = len(get_poly(u, deg=2))
+        n = 10
+        return get_poly(
+            np.hstack((x - self.trim_x, u - self.trim_u)), deg=2)[:-n]
 
     def phi_u(self, x, deg=[1, 2]):
-        return get_poly(x, deg=deg)
+        return get_poly(x - self.trim_x, deg=deg)
 
-    def reward(self, tx, tu):
+    def reward(self, x, u):
+        tx = x - self.trim_x
+        tu = u - self.trim_u
         return tx.dot(self.Q).dot(tx) + tu.dot(self.R).dot(tu)
 
 
@@ -188,6 +182,8 @@ def get_poly(p, deg=2):
     if isinstance(deg, int):
         if deg == 0:
             return 1
+        elif deg == 1:
+            return p
         else:
             return np.array([
                 functools.reduce(lambda a, b: a * b, tup)
