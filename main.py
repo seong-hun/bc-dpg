@@ -13,10 +13,11 @@ def main():
 
 @main.command()
 def run(**kwargs):
-    T = 0.05
+    T = 0.02
     env = envs.Env(
-        [16, 0, 0, 0], T, dt=0.01, max_t=25,
-        ode_step_len=4, odeint_option={},
+        [16, 0, 0, 0], T, dt=0.01, max_t=20,
+        solver="rk4",
+        ode_step_len=1, odeint_option={},
     )
     agent = agents.Agent()
     _run(env, agent)
