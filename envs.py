@@ -134,6 +134,14 @@ class Env(BaseEnv):
             # ``action`` is not ``None`` Only after the delay is available
             # and there are enough data in ``buffer`` of the agent.
             F, G = action or (0, 0)
+            # if action is not None:
+            #     eigvals = nla.eigvals(F)
+            #     print(f"time: {time:5.2f}, "
+            #           f"min: {eigvals.min():.2e}, "
+            #           f"max: {eigvals.max():.2e}")
+            # # eigvals.max() < 1e-9
+            # if time > 6:
+            #     print(np.abs(np.dot(F, WQ) + G).max())
 
             dx, dWu, dr = self.observe_d_list()
             dbu = self.get_behavior(dWu, dx, time)
@@ -149,11 +157,23 @@ class Env(BaseEnv):
             grad_u_phi_Q = self.grad_u_phi_Q(x, us)
             grad_Q = np.outer(phi_u, grad_u_phi_Q.T.dot(WQ))
 
-            self.systems_dict["WQ"].dot = (
-                - 200 * eQ * del_phi
-                - 200 * (np.dot(F, WQ) + G)
-            )
-            self.systems_dict["Wu"].dot = - 200 * grad_Q
+            aux = np.dot(F, WQ) + G
+            if np.abs(np.dot(F, WQ) + G).max() < 1e-8:
+                self.systems_dict["WQ"].dot = np.zeros_like(
+                    self.systems_dict["WQ"].state)
+                self.systems_dict["Wu"].dot = np.zeros_like(
+                    self.systems_dict["Wu"].state)
+            else:
+                self.systems_dict["WQ"].dot = (
+                    - 200 * eQ * del_phi
+                    - 200 * aux
+                )
+                self.systems_dict["Wu"].dot = (
+                    - 200 * grad_Q
+                )
+            # (200, 200), (200, 100), (200, 20), (100, 10)
+            # (200, 10), (200, 1)
+            # (100, 100), (10, 10)
         else:
             self.systems_dict["WQ"].dot = np.zeros_like(
                 self.systems_dict["WQ"].state)
@@ -167,7 +187,7 @@ class Env(BaseEnv):
         # n = len(get_poly(u, deg=2))
         n = 10
         return get_poly(
-            np.hstack((x - self.trim_x, u - self.trim_u)), deg=2)[:-n]
+            np.hstack((x - self.trim_x, u - self.trim_u)), deg=deg)[:-n]
 
     def phi_u(self, x, deg=[1, 2]):
         return get_poly(x - self.trim_x, deg=deg)
