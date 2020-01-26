@@ -13,19 +13,18 @@ def main():
 
 @main.command()
 def run(**kwargs):
-    T = 0.02
     env = envs.Env(
-        [16, 0, 0, 0], T, dt=0.01, max_t=20,
-        solver="rk4",
+        initial_state=[16, 0, 0, 0], W_init=0.0, eta=18,
+        dt=0.01, max_t=20, solver="rk4",
         ode_step_len=1, odeint_option={},
     )
-    agent = agents.Agent()
+    agent = agents.Agent(env, lr=1e-2, Wc_init=0.03, maxlen=100, batch_size=16)
     _run(env, agent)
 
 
 def _run(env, agent):
-    logger = logging.Logger(log_dir="data", file_name="tmp.h5",
-                            max_len=10)
+    logger = logging.Logger(
+        log_dir="data", file_name="tmp.h5", max_len=100)
     obs = env.reset()
     while True:
         env.render()
@@ -33,9 +32,10 @@ def _run(env, agent):
         action = agent.get_action(obs)
         next_obs, reward, done, info = env.step(action)
 
-        agent.append(obs)
-
         logger.record(**info)
+
+        agent.append(obs, action, reward, next_obs)
+        agent.train()
 
         obs = next_obs
 

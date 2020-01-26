@@ -62,8 +62,9 @@ def plot(savepath):
     # axes[0, 0].legend(*axes[0].get_legend_handles_labels())
 
     axes = canvas[2][1]
-    axes[0, 0].plot(time, data["WQ"], color="k")
-    axes[1, 0].plot(time, data["Wu"], color="k")
+    axes[0, 0].plot(time, data["Wc"], color="k")
+    axes[1, 0].plot(time, data["W"], color="k")
+    axes[1, 0].plot(time, data["Wb"], "b--")
 
     axes = canvas[3][1]
     axes[0, 0].plot(time, data["reward"], color="k")
