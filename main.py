@@ -123,8 +123,8 @@ def _train_on_samples(**kwargs):
         initial_perturb=[0, 0, 0, 0.2], W_init=0.0,
     )
     agent = agents.Agent(
-        env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
-        w_init=0.03, v_init=0.03, theta_init=0,
+        env, lrw=1e-2, lrv=1e-1, lrtheta=1e-2,
+        w_init=0.00, v_init=0.00, theta_init=0.00,
         maxlen=100, batch_size=16
     )
 
@@ -144,7 +144,12 @@ def _train_on_samples(**kwargs):
 
         # import ipdb; ipdb.set_trace()
         if epoch % recording_freq == 0 or epoch == kwargs["max_epoch"]:
-            logger.record(epoch=epoch, w=agent.w, v=agent.v, theta=agent.theta)
+            logger.record(
+                epoch=epoch,
+                w=agent.w,
+                v=agent.v,
+                theta=agent.theta
+            )
 
     logger.close()
     logging.save("data/weights.h5",

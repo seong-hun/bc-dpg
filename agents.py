@@ -46,6 +46,7 @@ class Agent:
             return None
 
         batch = random.sample(self.buffer, self.batch_size)
+        tderror = 0
         grad_w = np.zeros_like(self.w)
         grad_v = np.zeros_like(self.v)
         grad_theta = np.zeros_like(self.theta.ravel())
@@ -67,8 +68,9 @@ class Agent:
             if np.abs(tderror) > 0.0001:
                 grad_w += - tderror * self.phi_w(x, bu, self.theta)
                 grad_v += - tderror * self.phi_v(x)
-                dpdt = self.dpi_dtheta(x)
-                grad_theta += dpdt.dot(dpdt.T).dot(self.w)
+                # dpdt = self.dpi_dtheta(x)
+                # grad_theta += dpdt.dot(dpdt.T).dot(self.w)
+                grad_theta += self.w
 
             # print(np.dot(
             #     self.W[:self.m * self.n_phi],
@@ -88,8 +90,9 @@ class Agent:
     def phi(self, x, deg=[1, 2, 3]):
         return get_poly(x, deg=deg)
 
-    def phi_v(self, x, deg=2):
-        return np.hstack((x, x**2))
+    def phi_v(self, x, deg=[1, 2]):
+        return get_poly(x, deg=deg)
+        # return np.hstack((x, x**2))
 
     def phi_w(self, x, u, theta):
         return self.dpi_dtheta(x).dot(u - np.dot(self.phi(x), theta))
