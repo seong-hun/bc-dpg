@@ -54,13 +54,17 @@ class Agent:
             x, bu, reward, nx = b
             us = self.get_behavior(self.theta, nx)
             tderror = (
-                self.w.dot(self.phi_w(nx, us, self.theta))
-                + self.v.dot(self.phi_v(nx))
-                - self.w.dot(self.phi_w(x, bu, self.theta))
-                - self.v.dot(self.phi_v(x))
+                0.99 * (
+                    self.w.dot(self.phi_w(nx, us, self.theta))
+                    + self.v.dot(self.phi_v(nx))
+                )
+                - (
+                    self.w.dot(self.phi_w(x, bu, self.theta))
+                    + self.v.dot(self.phi_v(x))
+                )
                 + reward
             )
-            if np.abs(tderror) > 0.01:
+            if np.abs(tderror) > 0.0001:
                 grad_w += - tderror * self.phi_w(x, bu, self.theta)
                 grad_v += - tderror * self.phi_v(x)
                 dpdt = self.dpi_dtheta(x)

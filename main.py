@@ -20,7 +20,7 @@ def main():
 def run(**kwargs):
     env = envs.Env(
         initial_perturb=[0, 0, 0, 0.1], W_init=0.0,
-        dt=0.01, max_t=20, solver="rk4",
+        dt=0.01, max_t=40, solver="rk4",
         ode_step_len=1, odeint_option={},
     )
     agent = agents.Agent(

@@ -15,7 +15,7 @@ np.random.seed(1)
 
 class Env(BaseEnv):
     Q = np.diag([1, 100, 10, 100])
-    R = np.diag([1, 1, 0.1, 0.1])
+    R = np.diag([50, 1, 1, 1])
 
     def __init__(self, initial_perturb, W_init, **kwargs):
         self.system = MorphingLon([0, 0, 0, 0])
