@@ -14,12 +14,11 @@ np.random.seed(1)
 
 
 class Env(BaseEnv):
-    Q = 10 * np.diag([10, 100, 10, 100])
+    Q = np.diag([1, 100, 10, 100])
     R = np.diag([1, 1, 0.1, 0.1])
 
-    def __init__(self, initial_state, W_init, eta, **kwargs):
-        self.eta = eta
-        self.system = MorphingLon(initial_state)
+    def __init__(self, initial_perturb, W_init, **kwargs):
+        self.system = MorphingLon([0, 0, 0, 0])
         self.IR_system = BaseSystem(0, name="integral reward")
         super().__init__(
             systems_dict={
@@ -29,21 +28,79 @@ class Env(BaseEnv):
             **kwargs
         )
 
+        self.initial_perturb = initial_perturb
         trim_x, trim_u = self.system.get_trim()
         self.trim_x = trim_x
         self.trim_u = trim_u
+        self.system.initial_state = trim_x + initial_perturb
 
-        x = self.system.state
-        phi = self.phi(x)
-        W_init = W_init * np.random.randn(phi.size, trim_u.size)
-        self.W_system = BaseSystem(W_init, name="actor weights")
-        self.append_systems({"W": self.W_system})
+        # phi = self.phi(trim_x)
+        # W_init = W_init * np.random.randn(phi.size, trim_u.size)
+        # self.theta_system = BaseSystem(W_init, name="actor weights")
+        # self.append_systems({"theta": self.theta_system})
 
+    def reset(self, initial_perturb=None):
+        if initial_perturb == "random":
+            self.system.initial_state = (
+                self.trim_x
+                + self.initial_perturb
+                + [1, 0.05, 0.05, 0.05] * np.random.randn(4)
+            )
+
+        super().reset()
+        return self.observation()
+
+    def observation(self):
+        return self.system.state - self.trim_x
+
+    def step(self, action):
+        done = self.clock.time_over()
+        time = self.clock.get()
+        x = self.observation()
+        IR = self.IR_system.state
+        u = action + self.trim_u
+
+        if np.any(np.abs(x[(1, 3), ]) > np.deg2rad(30)):
+            done = True
+
+        self.update(u)
+
+        next_x = self.observation()
+        nIR = self.IR_system.state
+        reward = nIR - IR
+
+        info = {
+            "time": time,
+            "state": x,
+            "action": action,
+            "reward": reward,
+            "next_state": next_x
+        }
+
+        return next_x, reward, done, info
+
+    def set_dot(self, time, u):
+        x, _ = self.observe_list()
+
+        self.system.dot = self.system.deriv(x, u)
+        self.systems_dict["IR"].dot = self.reward(x, u)
+        # self.W_system.dot = np.zeros_like(W)
+
+    def reward(self, x, u):
+        tx = x - self.trim_x
+        tu = u - self.trim_u
+        return tx.dot(self.Q).dot(tx) + tu.dot(self.R).dot(tu)
+
+
+class AdpEnv(Env):
+    def __init__(self, initial_perturb, W_init, eta, **kwargs):
+        super().__init__(initial_perturb, W_init, **kwargs)
+        self.eta = eta
         self.grad_u_phi_c = jacob_analytic(self.phi_c, i=1)
 
     def reset(self):
         super().reset()
-        self.system.state = self.trim_x + [0, 0, 0, 0.02]
+        # self.system.state = self.trim_x + [0, 0, 0, 0.02]
         return self.observation()
 
     def observation(self):
@@ -95,7 +152,8 @@ class Env(BaseEnv):
         return self.system.saturation(self.trim_u + del_u)
 
     def set_dot(self, time, action):
-        x, RI, W = self.observe_list()
+        super().set_dot(time, action)
+        x, _ = self.observe_list()
         Wb, Wc = action
         bu = self.get_behavior(Wb, x)
         # us = self.get_behavior(W, x)
@@ -104,20 +162,4 @@ class Env(BaseEnv):
             self.grad_u_phi_c(x, bu).T.dot(Wc)
         )
 
-        self.system.dot = self.system.deriv(x, bu)
-        self.systems_dict["IR"].dot = self.reward(x, bu)
         self.systems_dict["W"].dot = - self.eta * grad_Q
-
-    def phi_c(self, x, u, deg=2):
-        # n = len(get_poly(u, deg=2))
-        n = 10
-        return get_poly(
-            np.hstack((x - self.trim_x, u - self.trim_u)), deg=deg)[:-n]
-
-    def phi(self, x, deg=[1, 2, 3]):
-        return get_poly(x - self.trim_x, deg=deg)
-
-    def reward(self, x, u):
-        tx = x - self.trim_x
-        tu = u - self.trim_u
-        return tx.dot(self.Q).dot(tx) + tu.dot(self.R).dot(tu)
