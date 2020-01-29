@@ -22,6 +22,13 @@ class Agent:
 
         self.n_phi = self.phi(self.trim_x).size
         self.theta = theta_init * np.random.randn(self.n_phi, self.m)
+        # self.W = W_init * np.random.randn(
+        #     self.phi_q(
+        #         np.zeros(self.trim_x.shape),
+        #         np.zeros(self.trim_u.shape),
+        #         self.theta
+        #     ).size
+        # )
         self.w = w_init * np.random.randn(
             self.phi_w(self.trim_x, self.trim_u, self.theta).size)
         self.v = v_init * np.random.randn(self.phi_v(self.trim_x).size)
@@ -49,24 +56,19 @@ class Agent:
             tderror = (
                 0.99 * (
                     self.w.dot(self.phi_w(nx, us, self.theta))
-                    + self.V(self.v, nx)
+                    + self.v.dot(self.phi_v(nx))
                 )
                 - (
                     self.w.dot(self.phi_w(x, bu, self.theta))
-                    + self.V(self.v, x)
+                    + self.v.dot(self.phi_v(x))
                 )
                 + reward
             )
             if np.abs(tderror) > 0.0001:
                 grad_w += - tderror * self.phi_w(x, bu, self.theta)
-                grad_v += - tderror * self.V_grad(self.v, x)
+                grad_v += - tderror * self.phi_v(x)
                 dpdt = self.dpi_dtheta(x)
                 grad_theta += dpdt.dot(dpdt.T).dot(self.w)
-
-            # if np.all(
-            #     self.saturation(self.trim_u + self.theta.T.dot(self.phi(x)))
-            #     - (self.trim_u + self.theta.T.dot(self.phi(x))) == 0
-            # ):
 
             # print(np.dot(
             #     self.W[:self.m * self.n_phi],
@@ -89,15 +91,11 @@ class Agent:
     def phi_v(self, x, deg=2):
         return np.hstack((x, x**2))
 
-    def V(self, v, x):
-        return np.log(1 + np.exp(np.dot(v, self.phi_v(x))))
-
-    def V_grad(self, v, x):
-        V = self.V(v, x)
-        return np.exp(V) / (1 + np.exp(V)) * self.phi_v(x)
-
     def phi_w(self, x, u, theta):
         return self.dpi_dtheta(x).dot(u - np.dot(self.phi(x), theta))
+
+    def phi_q(self, x, u, theta):
+        return np.hstack((self.phi_c(x, u, theta), self.phi_v(x)))
 
     def dpi_dtheta(self, x):
         return np.kron(np.eye(self.m), self.phi(x)).T
