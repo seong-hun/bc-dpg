@@ -123,9 +123,9 @@ def _train_on_samples(**kwargs):
         initial_perturb=[0, 0, 0, 0.2], W_init=0.0,
     )
     agent = agents.Agent(
-        env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
+        env, lrw=1e-1, lrv=1e-1, lrtheta=1e-2,
         w_init=0.03, v_init=0.03, theta_init=0,
-        maxlen=100, batch_size=16
+        maxlen=100, batch_size=64
     )
 
     data_list = [data[k] for k in ("state", "action", "reward", "next_state")]
