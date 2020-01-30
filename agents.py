@@ -73,7 +73,8 @@ class Agent:
         return get_poly(x, deg=deg)
 
     def phi_v(self, x, deg=2):
-        return np.hstack((x, x**2))
+        return get_poly(x, deg=deg)
+        # return np.hstack((x, x**2))
 
     def phi_w(self, x, u, theta):
         return self.dpi_dtheta(x).dot(u - np.dot(self.phi(x), theta))
