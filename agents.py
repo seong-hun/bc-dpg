@@ -6,7 +6,8 @@ import random
 from utils import get_poly
 
 
-class Agent:
+class COPDAC:
+    "Compatible off-policy deterministic actor-critc"
     def __init__(self, env, lrw, lrv, lrtheta, w_init, v_init, theta_init,
                  maxlen, batch_size):
         self.saturation = env.system.saturation
@@ -65,7 +66,7 @@ class Agent:
         self.w = self.w - self.lrw * grad_w / len(batch)
         self.v = self.v - self.lrv * grad_v / len(batch)
         self.theta = (
-            (1 - self.lrtheta) * self.theta
+            self.theta
             - self.lrtheta * grad_theta.reshape(self.theta.shape) / len(batch)
         )
 
@@ -93,10 +94,48 @@ class Agent:
         del_ub = theta.T.dot(self.phi(x))
         return self.saturation(self.trim_u + del_ub) - self.trim_u
 
-    def load_weights(self, datapath):
-        import fym.logging as logging
+    def load_weights(self, data):
+        self.theta = data["theta"][-1]
+        self.w = data["w"][-1]
+        self.v = data["v"][-1]
 
-        data = logging.load(datapath)
-        self.theta = data["theta"]
-        self.w = data["w"]
-        self.v = data["v"]
+
+class RegCOPDAC(COPDAC):
+    "Regulated compatible off-policy deterministic actor-critc"
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def train(self):
+        if len(self.buffer) < self.batch_size:
+            return None
+
+        batch = random.sample(self.buffer, self.batch_size)
+        grad_w = np.zeros_like(self.w)
+        grad_v = np.zeros_like(self.v)
+        grad_theta = np.zeros_like(self.theta.ravel())
+        for b in batch:
+            x, bu, reward, nx = b
+            us = self.get_behavior(self.theta, nx)
+            tderror = (
+                1 * (
+                    self.w.dot(self.phi_w(nx, us, self.theta))
+                    + self.v.dot(self.phi_v(nx))
+                )
+                + reward
+                - (
+                    self.w.dot(self.phi_w(x, bu, self.theta))
+                    + self.v.dot(self.phi_v(x))
+                )
+            )
+            if np.abs(tderror) > 0.0001:
+                grad_w += - tderror * self.phi_w(x, bu, self.theta)
+                grad_v += - tderror * self.phi_v(x)
+                dpdt = self.dpi_dtheta(x)
+                grad_theta += dpdt.dot(dpdt.T).dot(self.w)
+
+        self.w = self.w - self.lrw * grad_w / len(batch)
+        self.v = self.v - self.lrv * grad_v / len(batch)
+        self.theta = (
+            (1 - self.lrtheta) * self.theta
+            - self.lrtheta * grad_theta.reshape(self.theta.shape) / len(batch)
+        )

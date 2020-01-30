@@ -2,7 +2,7 @@ import numpy as np
 import numpy.linalg as nla
 
 import fym
-from fym.core import BaseEnv, BaseSystem
+import fym.core
 import fym.agents.LQR
 import fym.logging as logging
 from fym.models.aircraft import MorphingLon
@@ -13,13 +13,13 @@ from utils import get_poly
 np.random.seed(1)
 
 
-class Env(BaseEnv):
+class BaseEnv(fym.core.BaseEnv):
     Q = np.diag([1, 100, 10, 100])
     R = np.diag([50, 1, 1, 1])
 
     def __init__(self, initial_perturb, W_init, **kwargs):
         self.system = MorphingLon([0, 0, 0, 0])
-        self.IR_system = BaseSystem(0, name="integral reward")
+        self.IR_system = fym.core.BaseSystem(0, name="integral reward")
         super().__init__(
             systems_dict={
                 "main": self.system,
@@ -86,7 +86,7 @@ class Env(BaseEnv):
         return tx.dot(self.Q).dot(tx) + tu.dot(self.R).dot(tu)
 
 
-class AdpEnv(Env):
+class AdpEnv(BaseEnv):
     def __init__(self, initial_perturb, W_init, eta, **kwargs):
         super().__init__(initial_perturb, W_init, **kwargs)
         self.eta = eta

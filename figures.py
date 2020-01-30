@@ -1,80 +1,82 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from cycler import cycler
 
 import fym.logging as logging
 
+canvas = []
+fig, axes = plt.subplots(2, 2, sharex=True, num="states")
+for ax in axes.flat:
+    ax.mod = 1
+axes[0, 0].set_ylabel(r"$v$ [m/s]")
+axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
+axes[0, 1].mod = np.rad2deg(1)
+axes[1, 0].set_ylabel(r"$q$ [deg/s]")
+axes[1, 0].mod = np.rad2deg(1)
+axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
+axes[1, 1].mod = np.rad2deg(1)
+axes[1, 0].set_xlabel("time [s]")
+axes[1, 1].set_xlabel("time [s]")
+canvas.append((fig, axes))
 
-def plot(savepath):
-    data = logging.load(savepath)
+fig, axes = plt.subplots(2, 2, sharex=True, num="control")
+for ax in axes.flat:
+    ax.mod = 1
+axes[0, 0].set_ylabel(r"$\delta_t$")
+axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
+axes[0, 1].mod = np.rad2deg(1)
+axes[1, 0].set_ylabel(r"$\eta_1$")
+axes[1, 1].set_ylabel(r"$\eta_2$")
+axes[1, 0].set_xlabel("time [s]")
+axes[1, 1].set_xlabel("time [s]")
+canvas.append((fig, axes))
 
-    canvas = []
-    fig, axes = plt.subplots(2, 2, sharex=True)
-    for ax in axes.flat:
-        ax.mod = 1
-    axes[0, 0].set_ylabel(r"$v$ [m/s]")
-    axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
-    axes[0, 1].mod = np.rad2deg(1)
-    axes[1, 0].set_ylabel(r"$q$ [deg/s]")
-    axes[1, 0].mod = np.rad2deg(1)
-    axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
-    axes[1, 1].mod = np.rad2deg(1)
-    axes[1, 0].set_xlabel("time [s]")
-    axes[1, 1].set_xlabel("time [s]")
-    canvas.append((fig, axes))
+fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
+axes[0, 0].set_ylabel("reward")
+axes[0, 0].set_xlabel("time [s]")
+canvas.append((fig, axes))
 
-    fig, axes = plt.subplots(2, 2, sharex=True)
-    for ax in axes.flat:
-        ax.mod = 1
-    axes[0, 0].set_ylabel(r"$\delta_t$")
-    axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
-    axes[0, 1].mod = np.rad2deg(1)
-    axes[1, 0].set_ylabel(r"$\eta_1$")
-    axes[1, 1].set_ylabel(r"$\eta_2$")
-    axes[1, 0].set_xlabel("time [s]")
-    axes[1, 1].set_xlabel("time [s]")
-    canvas.append((fig, axes))
 
-    # fig, axes = plt.subplots(2, 1, sharex=True, squeeze=False)
-    # axes[0, 0].set_ylabel(r"$W_c$")
-    # axes[1, 0].set_ylabel(r"$W$")
-    # axes[1, 0].set_xlabel("time [s]")
-    # canvas.append((fig, axes))
-
-    fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False)
-    axes[0, 0].set_ylabel("reward")
-    axes[0, 0].set_xlabel("time [s]")
-    canvas.append((fig, axes))
-
+def plot_single(data, color="k", name=None):
     time = data["time"]
 
     axes = canvas[0][1]
     for ax, x in zip(axes.flat, data["state"].T):
-        ax.plot(time, x * ax.mod, color="k")
-    # for ax, x, trim_x in zip(axes.flat, data["state"].T, data["trim_x"].T):
-    #     ax.plot(time, x * ax.mod, color="k")
-    #     ax.plot(time, trim_x * ax.mod, "r--")
-    # axes[0, 0].lines[0].set_label("True")
-    # axes[0, 0].legend(*axes[0].get_legend_handles_labels())
+        ln, = ax.plot(time, x * ax.mod, color=color)
+    ln.set_label(name)
 
     axes = canvas[1][1]
     for ax, u in zip(axes.flat, data["action"].T):
-        ax.plot(time, u * ax.mod, color="k")
-    # for ax, u, trim_u in zip(axes.flat, data["control"].T, data["trim_u"].T):
-    #     ax.plot(time, u * ax.mod, color="k")
-    #     ax.plot(time, trim_u * ax.mod, "r--")
-    # axes[0, 0].lines[0].set_label("True")
-    # axes[0, 0].legend(*axes[0].get_legend_handles_labels())
-
-    # axes = canvas[2][1]
-    # axes[0, 0].plot(time, data["Wc"], color="k")
-    # axes[1, 0].plot(time, data["W"], color="k")
-    # axes[1, 0].plot(time, data["Wb"], "b--")
+        ln, = ax.plot(time, u * ax.mod, color=color)
+    ln.set_label(name)
 
     axes = canvas[2][1]
-    axes[0, 0].plot(time, data["reward"], color="k")
+    ln, = axes[0, 0].plot(time, data["reward"], color=color)
+    ln.set_label(name)
 
-    for fa in canvas:
-        fa[0].tight_layout()
+    for window in canvas:
+        fig, axes = window
+        axes[0, 0].legend(*axes[-1, -1].get_legend_handles_labels())
+        fig.tight_layout()
+
+
+def plot_mult(dataset, color_cycle=None, names=None):
+    if color_cycle is None:
+        color_cycle = cycler(
+            color=plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        )
+
+    if names is not None:
+        for data, color, name in zip(dataset.values(), color_cycle(), names):
+            plot_single(data, color=color["color"], name=name)
+
+        for fig, axes in canvas:
+            axes[0].legend(*axes[0].get_legend_handles_labels())
+    else:
+        for (name, data), color in zip(dataset.items(), color_cycle()):
+            plot_single(data, color=color["color"], name=name)
+
+    plt.show()
 
 
 def train_plot(savepath):
