@@ -65,7 +65,7 @@ class Agent:
         self.w = self.w - self.lrw * grad_w / len(batch)
         self.v = self.v - self.lrv * grad_v / len(batch)
         self.theta = (
-            self.theta
+            (1 - self.lrtheta) * self.theta
             - self.lrtheta * grad_theta.reshape(self.theta.shape) / len(batch)
         )
 
