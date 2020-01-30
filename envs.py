@@ -34,11 +34,6 @@ class Env(BaseEnv):
         self.trim_u = trim_u
         self.system.initial_state = trim_x + initial_perturb
 
-        # phi = self.phi(trim_x)
-        # W_init = W_init * np.random.randn(phi.size, trim_u.size)
-        # self.theta_system = BaseSystem(W_init, name="actor weights")
-        # self.append_systems({"theta": self.theta_system})
-
     def reset(self, initial_perturb=None):
         if initial_perturb == "random":
             self.system.initial_state = (
@@ -84,7 +79,6 @@ class Env(BaseEnv):
 
         self.system.dot = self.system.deriv(x, u)
         self.systems_dict["IR"].dot = self.reward(x, u)
-        # self.W_system.dot = np.zeros_like(W)
 
     def reward(self, x, u):
         tx = x - self.trim_x
@@ -100,7 +94,6 @@ class AdpEnv(Env):
 
     def reset(self):
         super().reset()
-        # self.system.state = self.trim_x + [0, 0, 0, 0.02]
         return self.observation()
 
     def observation(self):

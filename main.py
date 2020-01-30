@@ -19,7 +19,7 @@ def main():
 @click.option("--with-plot", "-p", is_flag=True)
 def run(**kwargs):
     env = envs.Env(
-        initial_perturb=[0, 0, 0, 0.1], W_init=0.0,
+        initial_perturb=[1, 0.0, 0, np.deg2rad(10)], W_init=0.0,
         dt=0.01, max_t=40, solver="rk4",
         ode_step_len=1, odeint_option={},
     )
@@ -50,9 +50,6 @@ def _run(env, agent, **kwargs):
         next_obs, reward, done, info = env.step(action)
 
         logger.record(**info)
-
-        # agent.append(obs, action, reward, next_obs)
-        # agent.train()
 
         obs = next_obs
 
