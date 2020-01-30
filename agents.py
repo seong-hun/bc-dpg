@@ -59,15 +59,19 @@ class Agent:
                     self.w.dot(self.phi_w(nx, us, self.theta))
                     + self.v.dot(self.phi_v(nx))
                 )
+                + reward
                 - (
                     self.w.dot(self.phi_w(x, bu, self.theta))
                     + self.v.dot(self.phi_v(x))
                 )
-                + reward
             )
             if np.abs(tderror) > 0.0001:
-                grad_w += - tderror * self.phi_w(x, bu, self.theta)
-                grad_v += - tderror * self.phi_v(x)
+                grad_w += tderror * (
+                    - self.phi_w(x, bu, self.theta)
+                )
+                grad_v += tderror * (
+                    - self.phi_v(x)
+                )
                 # dpdt = self.dpi_dtheta(x)
                 # grad_theta += dpdt.dot(dpdt.T).dot(self.w)
                 grad_theta += self.w
@@ -80,10 +84,11 @@ class Agent:
 
         self.w = self.w - self.lrw * grad_w / len(batch)
         self.v = self.v - self.lrv * grad_v / len(batch)
-        self.theta = (
-            self.theta
-            - self.lrtheta * grad_theta.reshape(self.theta.shape) / len(batch)
-        )
+        self.theta = self.w.reshape(self.theta.shape)
+        # self.theta = (
+        #     self.theta
+        #     - self.lrtheta * grad_theta.reshape(self.theta.shape) / len(batch)
+        # )
         # print(np.abs(grad_W).max() / len(batch),
         #       np.abs(grad_theta).max() / len(batch))
 
