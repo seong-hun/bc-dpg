@@ -8,7 +8,7 @@ from utils import get_poly
 
 class COPDAC:
     "Compatible off-policy deterministic actor-critc"
-    def __init__(self, env, lrw, lrv, lrtheta, w_init, v_init, theta_init,
+    def __init__(self, env, lrw, lrv, lrtheta, lrc, w_init, v_init, theta_init,
                  maxlen, batch_size):
         self.saturation = env.system.saturation
         self.trim_x = env.trim_x
@@ -18,6 +18,7 @@ class COPDAC:
         self.lrw = lrw
         self.lrv = lrv
         self.lrtheta = lrtheta
+        self.lrc = lrc
         self.buffer = deque(maxlen=maxlen)
         self.batch_size = batch_size
 
@@ -43,6 +44,7 @@ class COPDAC:
         grad_w = np.zeros_like(self.w)
         grad_v = np.zeros_like(self.v)
         grad_theta = np.zeros_like(self.theta.ravel())
+        delta = 0
         for b in batch:
             x, bu, reward, nx = b
             us = self.get_behavior(self.theta, nx)
@@ -63,12 +65,15 @@ class COPDAC:
                 dpdt = self.dpi_dtheta(x)
                 grad_theta += dpdt.dot(dpdt.T).dot(self.w)
 
+            delta += tderror
+
         self.w = self.w - self.lrw * grad_w / len(batch)
         self.v = self.v - self.lrv * grad_v / len(batch)
         self.theta = (
             self.theta
             - self.lrtheta * grad_theta.reshape(self.theta.shape) / len(batch)
         )
+        self.delta = delta / len(batch)
 
     def phi(self, x, deg=[1]):
         return get_poly(x, deg=deg)
@@ -113,6 +118,7 @@ class RegCOPDAC(COPDAC):
         grad_w = np.zeros_like(self.w)
         grad_v = np.zeros_like(self.v)
         grad_theta = np.zeros_like(self.theta.ravel())
+        delta = 0
         for b in batch:
             x, bu, reward, nx = b
             us = self.get_behavior(self.theta, nx)
@@ -133,9 +139,12 @@ class RegCOPDAC(COPDAC):
                 dpdt = self.dpi_dtheta(x)
                 grad_theta += dpdt.dot(dpdt.T).dot(self.w)
 
+            delta += tderror
+
         self.w = self.w - self.lrw * grad_w / len(batch)
         self.v = self.v - self.lrv * grad_v / len(batch)
         self.theta = (
-            (1 - self.lrtheta) * self.theta
+            (1 - self.lrc) * self.theta
             - self.lrtheta * grad_theta.reshape(self.theta.shape) / len(batch)
         )
+        self.delta = delta / len(batch)

@@ -29,7 +29,7 @@ def run(**kwargs):
             ode_step_len=1, odeint_option={}
         )
         agent = getattr(agents, agentname)(
-            env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
+            env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2, lrc=2e-3,
             w_init=0.03, v_init=0.03, theta_init=0,
             maxlen=100, batch_size=16
         )
@@ -113,10 +113,10 @@ def _sample(env, agent, logger):
 @main.command()
 @click.option("--in", "-i", "datapath", default="data/sample.h5")
 @click.option("--out", "-o", "savepath", default="data/trained.h5")
-@click.option("--max-epoch", "-n", "max_epoch", default=1000)
+@click.option("--max-epoch", "-n", "max_epoch", default=1500)
 # @click.option("--agents", "-a", "agentlist", multiple=True, )
 def train(**kwargs):
-    np.random.seed(1)
+    np.random.seed(4)
     env = envs.BaseEnv(
         initial_perturb=[0, 0, 0, 0.2], W_init=0.0)
     logger = logging.Logger(
@@ -126,7 +126,7 @@ def train(**kwargs):
     for agentname in agentlist:
         Agent = getattr(agents, agentname)
         agent = Agent(
-            env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
+            env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2, lrc=2e-3,
             w_init=0.03, v_init=0.03, theta_init=0,
             maxlen=100, batch_size=64
         )
@@ -157,7 +157,12 @@ def _train_on_samples(env, agent, logger, **kwargs):
         if epoch % recording_freq == 0 or epoch == kwargs["max_epoch"]:
             logger.record(**{
                 expname: dict(
-                    epoch=epoch, w=agent.w, v=agent.v, theta=agent.theta)
+                    epoch=epoch,
+                    w=agent.w,
+                    v=agent.v,
+                    theta=agent.theta,
+                    delta=agent.delta
+                )
             })
 
 
