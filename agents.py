@@ -6,6 +6,44 @@ import random
 from utils import get_poly
 
 
+class BaseAgent:
+    def __init__(self, env, theta_init):
+        self.clock = env.clock
+        self.saturation = env.system.saturation
+        self.trim_x = env.trim_x
+        self.trim_u = env.trim_u
+        self.m = self.trim_u.size
+        self.n_phi = self.phi(self.trim_x).size
+        self.theta = theta_init * np.random.randn(self.n_phi, self.m)
+        self.noise = False
+
+    def add_noise(self, scale, tau):
+        self.noise = {"scale": scale, "tau": tau}
+
+    def get_action(self, obs):
+        if not self.noise:
+            return self.get_behaviour(self.theta, obs)
+        else:
+            time = self.clock.get()
+            theta = self.theta + (
+                self.noise["scale"]
+                * np.exp(-time/self.noise["tau"])
+                * np.random.randn()
+            )
+            return self.get_behavior(theta, obs)
+
+    def phi(self, x, deg=[1]):
+        return get_poly(x, deg=deg)
+
+    def get_behavior(self, theta, x):
+        """If ``x = self.trim_x``, then ``del_u = 0``. This is ensured by
+        the structure of ``phi`` which has no constant term. Also,
+        the behavior policy should always be saturated by the control limits
+        defined by the system."""
+        del_ub = theta.T.dot(self.phi(x))
+        return self.saturation(self.trim_u + del_ub) - self.trim_u
+
+
 class COPDAC:
     "Compatible off-policy deterministic actor-critc"
     def __init__(self, env, lrw, lrv, lrtheta, lrc, w_init, v_init, theta_init,
@@ -75,9 +113,6 @@ class COPDAC:
         )
         self.delta = delta / len(batch)
 
-    def phi(self, x, deg=[1]):
-        return get_poly(x, deg=deg)
-
     def phi_v(self, x, deg=2):
         return get_poly(x, deg=deg)
         # return np.hstack((x, x**2))
@@ -90,14 +125,6 @@ class COPDAC:
 
     def dpi_dtheta(self, x):
         return np.kron(np.eye(self.m), self.phi(x)).T
-
-    def get_behavior(self, theta, x):
-        """If ``x = self.trim_x``, then ``del_u = 0``. This is ensured by
-        the structure of ``phi`` which has no constant term. Also,
-        the behavior policy should always be saturated by the control limits
-        defined by the system."""
-        del_ub = theta.T.dot(self.phi(x))
-        return self.saturation(self.trim_u + del_ub) - self.trim_u
 
     def load_weights(self, data):
         self.theta = data["theta"][-1]

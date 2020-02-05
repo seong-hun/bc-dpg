@@ -1,11 +1,19 @@
 import click
 import numpy as np
 import tqdm
+import os
+import glob
+import time
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
+
+import torch.multiprocessing as mp
 
 import fym.logging as logging
 
 import envs
 import agents
+import gan
 
 
 @click.group()
@@ -24,7 +32,7 @@ def run(**kwargs):
     for expname, data in dataset.items():
         envname, agentname = expname.split("-")
         env = getattr(envs, envname)(
-            initial_perturb=[1, 0.0, 0, np.deg2rad(10)], W_init=0.0,
+            initial_perturb=[1, 0.0, 0, np.deg2rad(10)],
             dt=0.01, max_t=40, solver="rk4",
             ode_step_len=1, odeint_option={}
         )
@@ -70,70 +78,121 @@ def _run(env, agent, logger, expname, **kwargs):
 
 @main.command()
 @click.option("--number", "-n", default=50)
-@click.option("--out", "-o", default="sample.h5")
+@click.option("--log-dir", default="data/samples")
+@click.option("--max-workers", "-m", default=None)
 def sample(**kwargs):
-    env = envs.Env(
-        initial_perturb=[0, 0, 0, 0.1], W_init=0.0,
-        dt=0.01, max_t=20, solver="rk4",
-        ode_step_len=1, odeint_option={},
-    )
-    agent = agents.Agent(
-        env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
-        w_init=0.03, v_init=0.03, theta_init=0,
-        maxlen=100, batch_size=16
-    )
 
-    print("Sample trajectories")
+    print("Sample trajectories ...")
+
+    prog = partial(_sample_prog, log_dir=kwargs["log_dir"])
+
+    t0 = time.time()
+    with ProcessPoolExecutor(kwargs["max_workers"]) as p:
+        list(tqdm.tqdm(
+            p.map(prog, range(kwargs["number"])),
+            total=kwargs["number"]
+        ))
+
+    print(f"Elapsed time: {time.time() - t0:5.2f} sec"
+          f" > Finished - saved in {kwargs['log_dir']}")
+
+
+def _sample_prog(i, log_dir):
+    env = envs.BaseEnv(
+        initial_perturb=[0, 0, 0, 0.1],
+        dt=0.01, max_t=20,
+        solver="rk4", ode_step_len=1,
+    )
+    agent = agents.BaseAgent(env, theta_init=0)
+    agent.add_noise(scale=0.03, tau=2)
+    file_name = f"{i:03d}.h5"
+    _sample(env, agent, log_dir, file_name)
+
+
+def _sample(env, agent, log_dir, file_name):
     logger = logging.Logger(
-        log_dir="data", file_name=kwargs["out"], max_len=100
-    )
-    for i in tqdm.trange(kwargs["number"]):
-        _sample(env, agent, logger)
-    logger.close()
+        log_dir=log_dir, file_name=file_name, max_len=100)
 
-
-def _sample(env, agent, logger):
     obs = env.reset("random")
     while True:
-        # env.render()
-
-        action = agent.get_action(obs, noise_scale=0.03)
+        action = agent.get_action(obs)
         next_obs, reward, done, info = env.step(action)
-
         logger.record(**info)
-
         obs = next_obs
 
         if done:
             break
 
     env.close()
+    logger.close()
 
 
 @main.command()
-@click.option("--in", "-i", "datapath", default="data/sample.h5")
+@click.option("--sample-dir", "-s", default="data/samples")
 @click.option("--out", "-o", "savepath", default="data/trained.h5")
 @click.option("--max-epoch", "-n", "max_epoch", default=1500)
-# @click.option("--agents", "-a", "agentlist", multiple=True, )
+@click.option("--batch-size", "-b", default=64)
+@click.option("--max-workers", "-m", default=0)
+@click.option("--gan", "mode", flag_value="gan")
+@click.option("--offline", "mode", flag_value="offline")
+@click.option("--all", "mode", flag_value="all")
 def train(**kwargs):
-    np.random.seed(4)
-    env = envs.BaseEnv(
-        initial_perturb=[0, 0, 0, 0.2], W_init=0.0)
-    logger = logging.Logger(
-        log_dir=".", file_name=kwargs["savepath"], max_len=100)
-
-    agentlist = ("COPDAC", "RegCOPDAC")
-    for agentname in agentlist:
-        Agent = getattr(agents, agentname)
-        agent = Agent(
-            env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2, lrc=2e-3,
-            w_init=0.03, v_init=0.03, theta_init=0,
-            maxlen=100, batch_size=64
+    if kwargs["mode"] == "gan" or kwargs["mode"] == "all":
+        print("Train GAN ...")
+        sample_files = sorted(glob.glob(
+            os.path.join(kwargs["sample_dir"], "*.h5")))
+        agent = gan.GAN(lr=1e-3, x_size=4, u_size=4, z_size=10)
+        prog = partial(
+            _gan_prog, agent=agent, files=sample_files,
+            max_epoch=kwargs["max_epoch"],
+            batch_size=kwargs["batch_size"],
         )
-        print(f"Training {agentname}...")
-        _train_on_samples(env, agent, logger, **kwargs)
 
-    logger.close()
+        t0 = time.time()
+
+        if kwargs["max_workers"] == 1:
+            prog(0)
+        else:
+            agent.share_memory()
+            with mp.Pool(kwargs["max_workers"] or None) as p:
+                list(tqdm.tqdm(
+                    p.map(prog, range(len(sample_files))),
+                    total=len(sample_files),
+                ))
+
+        print(f"Elapsed time: {time.time() - t0:5.2f} sec")
+
+    if kwargs["mode"] == "offline" or kwargs["mode"] == "all":
+        np.random.seed(4)
+        env = envs.BaseEnv(
+            initial_perturb=[0, 0, 0, 0.2])
+        logger = logging.Logger(
+            log_dir=".", file_name=kwargs["savepath"], max_len=100)
+
+        agentlist = ("COPDAC", "RegCOPDAC")
+        for agentname in agentlist:
+            Agent = getattr(agents, agentname)
+            agent = Agent(
+                env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2, lrc=2e-3,
+                w_init=0.03, v_init=0.03, theta_init=0,
+                maxlen=100, batch_size=64
+            )
+            print(f"Training {agentname}...")
+            _train_on_samples(env, agent, logger, **kwargs)
+
+        logger.close()
+
+
+def _gan_prog(n, agent, files, max_epoch, shuffle=True, batch_size=32):
+    dataloader = gan.get_dataloader(
+        files, shuffle=shuffle, batch_size=batch_size)
+
+    for epoch in range(max_epoch):
+        for i, data in enumerate(dataloader):
+            agent.set_input(data)
+            agent.train()
+
+            print(i, agent.loss_d, agent.loss_g)
 
 
 def _train_on_samples(env, agent, logger, **kwargs):
@@ -141,7 +200,7 @@ def _train_on_samples(env, agent, logger, **kwargs):
 
     expname = "-".join([type(n).__name__ for n in (env, agent)])
 
-    data = logging.load(kwargs["datapath"])
+    data = logging.load(kwargs["sample_dir"])
     data_list = [data[k] for k in ("state", "action", "reward", "next_state")]
     agent.buffer = deque([d for d in zip(*data_list)])
 
@@ -153,7 +212,6 @@ def _train_on_samples(env, agent, logger, **kwargs):
                 or np.any(np.isnan(agent.v))):
             break
 
-        # import ipdb; ipdb.set_trace()
         if epoch % recording_freq == 0 or epoch == kwargs["max_epoch"]:
             logger.record(**{
                 expname: dict(

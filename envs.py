@@ -17,7 +17,7 @@ class BaseEnv(fym.core.BaseEnv):
     Q = np.diag([1, 100, 10, 100])
     R = np.diag([50, 1, 1, 1])
 
-    def __init__(self, initial_perturb, W_init, **kwargs):
+    def __init__(self, initial_perturb, **kwargs):
         self.system = MorphingLon([0, 0, 0, 0])
         self.IR_system = fym.core.BaseSystem(0, name="integral reward")
         super().__init__(
