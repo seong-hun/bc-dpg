@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
+import torch
 import torch.multiprocessing as mp
 
 import fym.logging as logging
@@ -135,35 +136,38 @@ def _sample(env, agent, log_dir, file_name):
 @click.option("--max-workers", "-m", default=0)
 @click.option("--gan", "mode", flag_value="gan")
 @click.option("--offline", "mode", flag_value="offline")
-@click.option("--all", "mode", flag_value="all")
+@click.option("--all", "mode", flag_value="all", default=True)
 def train(**kwargs):
+    torch.manual_seed(4)
+    np.random.seed(4)
+
     if kwargs["mode"] == "gan" or kwargs["mode"] == "all":
+
         print("Train GAN ...")
         sample_files = sorted(glob.glob(
             os.path.join(kwargs["sample_dir"], "*.h5")))
         agent = gan.GAN(lr=1e-3, x_size=4, u_size=4, z_size=10)
         prog = partial(
             _gan_prog, agent=agent, files=sample_files,
-            max_epoch=kwargs["max_epoch"],
             batch_size=kwargs["batch_size"],
         )
 
         t0 = time.time()
 
         if kwargs["max_workers"] == 1:
-            prog(0)
+            for epoch in range(kwargs["max_epoch"]):
+                prog(epoch)
         else:
             agent.share_memory()
             with mp.Pool(kwargs["max_workers"] or None) as p:
                 list(tqdm.tqdm(
-                    p.map(prog, range(len(sample_files))),
-                    total=len(sample_files),
+                    p.map(prog, range(kwargs["max_epoch"])),
+                    total=kwargs["max_epoch"],
                 ))
 
         print(f"Elapsed time: {time.time() - t0:5.2f} sec")
 
     if kwargs["mode"] == "offline" or kwargs["mode"] == "all":
-        np.random.seed(4)
         env = envs.BaseEnv(
             initial_perturb=[0, 0, 0, 0.2])
         logger = logging.Logger(
@@ -183,16 +187,13 @@ def train(**kwargs):
         logger.close()
 
 
-def _gan_prog(n, agent, files, max_epoch, shuffle=True, batch_size=32):
+def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
     dataloader = gan.get_dataloader(
         files, shuffle=shuffle, batch_size=batch_size)
 
-    for epoch in range(max_epoch):
-        for i, data in enumerate(dataloader):
-            agent.set_input(data)
-            agent.train()
-
-            print(i, agent.loss_d, agent.loss_g)
+    for i, data in enumerate(dataloader):
+        agent.set_input(data)
+        agent.train()
 
 
 def _train_on_samples(env, agent, logger, **kwargs):
