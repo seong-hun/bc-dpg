@@ -104,13 +104,19 @@ class Discriminator(nn.Module):
     def __init__(self, x_size, u_size):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(u_size + x_size, 128),
+            nn.Linear(u_size + x_size, 64),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(64, 128),
             nn.LeakyReLU(negative_slope=0.2, inplace=True),
             nn.Dropout(0.5),
             nn.Linear(128, 128),
             nn.LeakyReLU(negative_slope=0.2, inplace=True),
             nn.Dropout(0.5),
-            nn.Linear(128, 1),
+            nn.Linear(128, 64),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(64, 1),
             nn.Sigmoid(),
         )
 
@@ -137,15 +143,6 @@ class Generator(nn.Module):
             nn.Dropout(0.5),
             nn.Linear(64, u_size),
         )
-        # self.model = nn.Sequential(
-        #     nn.Linear(z_size + x_size, 128),
-        #     nn.LeakyReLU(negative_slope=0.2, inplace=True),
-        #     nn.Dropout(0.5),
-        #     nn.Linear(128, 128),
-        #     nn.LeakyReLU(negative_slope=0.2, inplace=True),
-        #     nn.Dropout(0.5),
-        #     nn.Linear(128, u_size),
-        # )
 
     def forward(self, zx):
         out = self.model(zx)
@@ -174,5 +171,5 @@ class DictDataset(Dataset):
         return self.len
 
 
-def get_dataloader(sample_files, keys=("state", "action"), **kwargs):
+def get_dataloader(sample_files, keys=("state", "action", "mask"), **kwargs):
     return DataLoader(DictDataset(sample_files, keys), **kwargs)
