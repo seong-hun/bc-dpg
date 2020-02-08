@@ -34,11 +34,20 @@ class GAN():
         self.net_d = Discriminator(x_size=x_size, u_size=u_size)
         self.net_g = Generator(x_size=x_size, u_size=u_size, z_size=z_size)
 
+        # self.initialize(self.net_d)
+        # self.initialize(self.net_g)
+
         self.criterion = LossWrapper(nn.MSELoss())
         self.criterion_l1 = nn.L1Loss()
 
         self.optimizer_d = torch.optim.Adam(self.net_d.parameters(), lr=lr)
         self.optimizer_g = torch.optim.Adam(self.net_g.parameters(), lr=lr)
+
+    def initialize(self, net):
+        for module in net.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0, std=0.2)
+                nn.init.constant_(module.bias, 0)
 
     def set_input(self, data):
         self.real_x, self.real_u = (data[i].to(device) for i in (0, 1))
@@ -77,8 +86,8 @@ class GAN():
         self.optimizer_g.zero_grad()
         pred_fake = self.net_d(fake_xu)
         self.loss_g = self.criterion(pred_fake, True)
-        # self.loss_g += (
-        #     self.criterion_l1(self.fake_u, self.real_u) * self.lambda_l1)
+        self.loss_g += (
+            self.criterion_l1(self.fake_u, self.real_u) * self.lambda_l1)
         self.loss_g.backward()
 
         self.optimizer_g.step()
@@ -98,6 +107,10 @@ class GAN():
         data = torch.load(loadpath)
         self.net_d.load_state_dict(data["net_d"])
         self.net_g.load_state_dict(data["net_g"])
+
+    def eval(self):
+        self.net_d.eval()
+        self.net_g.eval()
 
 
 class Discriminator(nn.Module):
