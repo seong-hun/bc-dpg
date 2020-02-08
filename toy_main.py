@@ -19,6 +19,9 @@ import gan
 
 import matplotlib.pyplot as plt
 
+torch.manual_seed(0)
+np.random.seed(0)
+
 
 def common_params(func):
     @click.option("--base-dir", default="data/toy")
@@ -43,6 +46,7 @@ class DataStructure:
 
 @click.group(invoke_without_command=True)
 @click.option("--base-dir", default="data/toy")
+@click.option("--use-cuda", is_flag=True)
 @click.pass_context
 def main(ctx, **kwargs):
     ctx.ensure_object(dict)
@@ -57,7 +61,8 @@ def main(ctx, **kwargs):
 
 @main.command()
 @click.option("--all", "-a", is_flag=True)
-@click.option("--mode", "-m", type=click.Choice(["even", "sparse", "det"]),
+@click.option("--mode", "-m",
+              type=click.Choice(["even", "sparse", "det", "detmult"]),
               multiple=True)
 @click.option("--noise", "-n", default=0.15)
 @click.pass_obj
@@ -65,7 +70,7 @@ def sample(obj, **kwargs):
     np.random.seed(0)
     exps = kwargs["mode"]
     if kwargs["all"]:
-        exps = ("even", "sparse", "det")
+        exps = ("even", "sparse", "det", "detmult")
 
     for exp in exps:
         samplepath = os.path.join(obj.sample_dir, exp + ".h5")
@@ -97,6 +102,8 @@ class DataGen():
             self.get_mask = self._sparse_mask
         elif mode == "det":
             self.get_behavior = self._get_behavior(noise=0)
+        elif mode == "detmult":
+            self.get_behavior = self._get_det_behavior()
 
     def __call__(self):
         x = np.clip(self.get_x(), *self.x_bound)
@@ -116,6 +123,19 @@ class DataGen():
         else:
             return True
 
+    def _get_det_behavior(self):
+        def func(x):
+            flag = np.random.randint(4)
+            if flag == 0:
+                return 2 * x
+            elif flag == 1:
+                return 1 * x
+            elif flag == 2:
+                return x ** 2
+            elif flag == 3:
+                return -x
+        return func
+
     def _get_behavior(self, noise):
         def func(x, noise=noise):
             if np.random.rand() > 0.5:
@@ -127,10 +147,13 @@ class DataGen():
 
 @main.command()
 @click.argument("samples", nargs=-1, type=click.Path(exists=True))
-@click.option("--max-epoch", "-n", "max_epoch", default=100)
+@click.option("--max-epoch", "-n", "max_epoch", default=200)
 @click.option("--save-interval", "-s", default=10)
 @click.option("--batch-size", "-b", default=64)
 @click.option("--max-workers", "-m", default=0)
+@click.option("--lr", default=2e-4)
+@click.option("--continue", "-c", nargs=1, type=click.Path(exists=True))
+@click.option("--z-size", default=30)
 @click.pass_obj
 def train(obj, samples, **kwargs):
     for sample in samples:
@@ -146,7 +169,12 @@ def train(obj, samples, **kwargs):
 
         gandir = os.path.join(obj.gan_dir, basedir)
 
-        if os.path.exists(gandir):
+        torch.save(
+            samplefiles,
+            os.path.join(gandir, "sample_path.h5"),
+        )
+
+        if kwargs["continue"] is None and os.path.exists(gandir):
             shutil.rmtree(gandir)
         os.makedirs(gandir, exist_ok=True)
 
@@ -154,17 +182,26 @@ def train(obj, samples, **kwargs):
 
         save_interval = int(kwargs["save_interval"])
 
-        agent = gan.GAN(lr=1e-3, x_size=1, u_size=1, z_size=10)
+        agent = gan.GAN(
+            lr=kwargs["lr"], x_size=1, u_size=1, z_size=kwargs["z_size"])
+
         prog = functools.partial(
             _gan_prog, agent=agent, files=samplefiles,
             batch_size=kwargs["batch_size"],
         )
 
-        logger = logging.Logger(
-            path=os.path.join(gandir, "train_history.h5"), max_len=500)
+        histpath = os.path.join(gandir, "train_history.h5")
+
+        if kwargs["continue"] is not None:
+            epoch_start = agent.load(kwargs["continue"])
+            logger = logging.Logger(path=histpath, max_len=100, mode="r+")
+        else:
+            epoch_start = 0
+            logger = logging.Logger(path=histpath, max_len=100)
 
         t0 = time.time()
-        for epoch in tqdm.trange(1 + kwargs["max_epoch"]):
+        for epoch in tqdm.trange(epoch_start,
+                                 epoch_start + 1 + kwargs["max_epoch"]):
             loss_d, loss_g = prog(epoch)
 
             logger.record(epoch=epoch, loss_d=loss_d, loss_g=loss_g)
@@ -177,10 +214,6 @@ def train(obj, samples, **kwargs):
         logger.close()
 
         print(f"Elapsed time: {time.time() - t0:5.2f} sec")
-        torch.save(
-            samplefiles,
-            os.path.join(gandir, "sample_path.h5"),
-        )
 
 
 def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
@@ -252,7 +285,9 @@ def test(obj, **kwargs):
 
 @main.command()
 @common_params
-@click.option("--sample", "mode", flag_value="sample", default=True)
+@click.option("--mode", "-m",
+              type=click.Choice(["sample", "hist", "test"]),
+              default="sample")
 @click.argument("testfiles", nargs=-1, type=click.Path(exists=True))
 @click.pass_obj
 def plot(obj, **kwargs):
@@ -272,6 +307,14 @@ def plot(obj, **kwargs):
         for testfile in kwargs["testfiles"]:
             print(testfile)
             _plot_sample(testfile)
+    elif kwargs["mode"] == "test":
+        for testfile in kwargs["testfiles"]:
+            print(testfile)
+            _plot(obj, testfile)
+    elif kwargs["mode"] == "hist":
+        for testfile in kwargs["testfiles"]:
+            print(testfile)
+            _plot_hist(testfile)
 
     plt.show()
 
@@ -349,12 +392,12 @@ def _plot(obj, testfile):
     fig.tight_layout()
 
 
-def _plot_hist(obj, testfile):
-    histfile = os.path.join(
-        obj.gan_dir,
-        os.path.relpath(os.path.dirname(testfile), obj.test_dir),
-        "train_history.h5"
-    )
+def _plot_hist(histfile):
+    # histfile = os.path.join(
+    #     obj.gan_dir,
+    #     os.path.relpath(os.path.dirname(testfile), obj.test_dir),
+    #     "train_history.h5"
+    # )
 
     histdata = logging.load(histfile)
 

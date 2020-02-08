@@ -8,7 +8,8 @@ from torch.utils.data import DataLoader, Dataset
 
 import fym.logging as logging
 
-device = torch.device('cpu')
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 
 
 class LossWrapper:
@@ -34,8 +35,8 @@ class GAN():
         self.net_d = Discriminator(x_size=x_size, u_size=u_size)
         self.net_g = Generator(x_size=x_size, u_size=u_size, z_size=z_size)
 
-        # self.initialize(self.net_d)
-        # self.initialize(self.net_g)
+        self.initialize(self.net_d)
+        self.initialize(self.net_g)
 
         self.criterion = LossWrapper(nn.MSELoss())
         self.criterion_l1 = nn.L1Loss()
@@ -107,6 +108,7 @@ class GAN():
         data = torch.load(loadpath)
         self.net_d.load_state_dict(data["net_d"])
         self.net_g.load_state_dict(data["net_g"])
+        return data["epoch"]
 
     def eval(self):
         self.net_d.eval()
