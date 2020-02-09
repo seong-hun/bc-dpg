@@ -57,7 +57,6 @@ class DataStructure:
     context_settings=CONTEXT_SETTINGS,
 )
 @click.option("--base-dir", default="data/toy")
-@click.option("--use-cuda", is_flag=True)
 @click.pass_context
 def main(ctx, **kwargs):
     ctx.ensure_object(dict)
@@ -165,6 +164,7 @@ class DataGen():
 @click.option("--lr", default=2e-4)
 @click.option("--continue", "-c", nargs=1, type=click.Path(exists=True))
 @click.option("--z-size", default=30)
+@click.option("--use-cuda", is_flag=True)
 @click.pass_obj
 def train(obj, samples, **kwargs):
     for sample in samples:
@@ -194,7 +194,9 @@ def train(obj, samples, **kwargs):
         save_interval = int(kwargs["save_interval"])
 
         agent = gan.GAN(
-            lr=kwargs["lr"], x_size=1, u_size=1, z_size=kwargs["z_size"])
+            lr=kwargs["lr"], x_size=1, u_size=1,
+            z_size=kwargs["z_size"], use_cuda=kwargs["use_cuda"],
+        )
 
         prog = functools.partial(
             _gan_prog, agent=agent, files=samplefiles,
@@ -244,8 +246,8 @@ def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
         u = u[mask.bool().squeeze()]
         agent.set_input((x, u))
         agent.train()
-        loss_d += agent.loss_d.mean().detach().numpy()
-        loss_g += agent.loss_g.mean().detach().numpy()
+        loss_d += float(agent.loss_d.mean())
+        loss_g += float(agent.loss_g.mean())
 
     return loss_d / i, loss_g / i
 

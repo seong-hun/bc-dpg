@@ -30,3 +30,4 @@ $ python main.py plot data/run.h5
 
 - Add click options at the top of the main.
 - Add a (CPU/GPU) multiprocessing function
+- Auto subplot

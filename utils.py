@@ -1,6 +1,8 @@
 import numpy as np
 import functools
 import itertools
+import glob
+import os
 
 
 def get_poly(p, deg=2):
@@ -18,3 +20,14 @@ def get_poly(p, deg=2):
         return np.hstack([get_poly(p, deg=d) for d in deg])
     else:
         raise ValueError("deg should be an integer or a list of integers.")
+
+
+def parse_file(files, ext="h5"):
+    target = []
+    for file in files:
+        if os.path.isdir(file):
+            target += sorted(glob.glob(os.path.join(file, "." + ext)))
+        else:
+            target += [file]
+
+    return target

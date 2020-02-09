@@ -8,8 +8,6 @@ from torch.utils.data import DataLoader, Dataset
 
 import fym.logging as logging
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 class Discriminator(nn.Module):
     def __init__(self, x_size, u_size):
@@ -61,32 +59,37 @@ class Generator(nn.Module):
 
 
 class GAN():
-    def __init__(self, lr, x_size, u_size, z_size, lambda_l1=0.01):
+    def __init__(self, lr, x_size, u_size, z_size,
+                 is_cuda=False, lambda_l1=0.01):
         self.z_size = z_size
         self.lambda_l1 = lambda_l1
         self.net_d = Discriminator(x_size=x_size, u_size=u_size)
         self.net_g = Generator(x_size=x_size, u_size=u_size, z_size=z_size)
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() and is_cuda else "cpu")
 
         self.initialize(self.net_d)
         self.initialize(self.net_g)
 
-        self.criterion = LossWrapper(nn.MSELoss())
+        self.criterion = LossWrapper(nn.MSELoss()).to(self.device)
         self.criterion_l1 = nn.L1Loss()
 
         self.optimizer_d = torch.optim.Adam(self.net_d.parameters(), lr=lr)
         self.optimizer_g = torch.optim.Adam(self.net_g.parameters(), lr=lr)
 
     def initialize(self, net):
+        net.to(self.device)
         for module in net.modules():
             if isinstance(module, nn.Linear):
                 nn.init.normal_(module.weight, mean=0, std=0.2)
                 nn.init.constant_(module.bias, 0)
 
     def set_input(self, data):
-        self.real_x, self.real_u = (data[i].to(device) for i in (0, 1))
+        self.real_x, self.real_u = (data[i].to(self.device) for i in (0, 1))
 
     def forward(self, x):
-        zx = torch.cat((torch.randn(len(x), self.z_size), x), 1)
+        z = torch.randn(len(x), self.z_size).to(self.device)
+        zx = torch.cat((z, x), 1)
         self.fake_u = self.net_g(zx)  # G(x)
 
     def get_action(self, x):
@@ -137,7 +140,7 @@ class GAN():
         }, savepath)
 
     def load(self, loadpath):
-        data = torch.load(loadpath)
+        data = torch.load(loadpath, map_location=self.device)
         self.net_d.load_state_dict(data["net_d"])
         self.net_g.load_state_dict(data["net_g"])
         return data["epoch"]
@@ -147,8 +150,11 @@ class GAN():
         self.net_g.eval()
 
 
-class LossWrapper:
+class LossWrapper(nn.Module):
     def __init__(self, loss):
+        super().__init__()
+        self.register_buffer("real_label", torch.tensor(1.0))
+        self.register_buffer("fake_label", torch.tensor(0.0))
         self.loss = loss
 
     def __call__(self, x, y):
@@ -157,9 +163,9 @@ class LossWrapper:
 
     def get_target_tensor(self, x, y):
         if y:
-            target_tensor = torch.tensor(1.0)
+            target_tensor = self.real_label
         else:
-            target_tensor = torch.tensor(0.0)
+            target_tensor = self.fake_label
         return target_tensor.expand_as(x)
 
 
