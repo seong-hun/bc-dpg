@@ -22,6 +22,14 @@ import matplotlib.pyplot as plt
 torch.manual_seed(0)
 np.random.seed(0)
 
+CONTEXT_SETTINGS = dict(
+    default_map={
+        "train": {
+            "lr": 2e-4,
+        }
+    }
+)
+
 
 def common_params(func):
     @click.option("--base-dir", default="data/toy")
@@ -44,7 +52,10 @@ class DataStructure:
         self.img_dir = os.path.join(base_dir, "imgs")
 
 
-@click.group(invoke_without_command=True)
+@click.group(
+    invoke_without_command=True,
+    context_settings=CONTEXT_SETTINGS,
+)
 @click.option("--base-dir", default="data/toy")
 @click.option("--use-cuda", is_flag=True)
 @click.pass_context
@@ -194,10 +205,12 @@ def train(obj, samples, **kwargs):
 
         if kwargs["continue"] is not None:
             epoch_start = agent.load(kwargs["continue"])
-            logger = logging.Logger(path=histpath, max_len=100, mode="r+")
+            logger = logging.Logger(
+                path=histpath, max_len=kwargs["save_interval"], mode="r+")
         else:
             epoch_start = 0
-            logger = logging.Logger(path=histpath, max_len=100)
+            logger = logging.Logger(
+                path=histpath, max_len=kwargs["save_interval"])
 
         t0 = time.time()
         for epoch in tqdm.trange(epoch_start,
@@ -206,7 +219,8 @@ def train(obj, samples, **kwargs):
 
             logger.record(epoch=epoch, loss_d=loss_d, loss_g=loss_g)
 
-            if epoch % save_interval == 0 or epoch == 1 + kwargs["max_epoch"]:
+            if (epoch % save_interval == 0
+                    or epoch == epoch_start + 1 + kwargs["max_epoch"]):
                 savepath = os.path.join(gandir, f"trained_{epoch:05d}.pth")
                 agent.save(epoch, savepath)
                 tqdm.tqdm.write(f"Weights are saved in {savepath}.")
@@ -225,13 +239,13 @@ def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
 
     loss_d = 0
     loss_g = 0
-    for i, (x, u, mask) in enumerate(dataloader):
+    for i, (x, u, mask) in enumerate(dataloader, start=1):
         x = x[mask.bool().squeeze()]
         u = u[mask.bool().squeeze()]
         agent.set_input((x, u))
         agent.train()
         loss_d += agent.loss_d.mean().detach().numpy()
-        loss_g += agent.loss_d.mean().detach().numpy()
+        loss_g += agent.loss_g.mean().detach().numpy()
 
     return loss_d / i, loss_g / i
 
@@ -242,13 +256,13 @@ def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
 @click.option("--plot", "-p", is_flag=True)
 @click.pass_obj
 def test(obj, **kwargs):
-    agent = gan.GAN(lr=1e-3, x_size=1, u_size=1, z_size=10)
+    agent = gan.GAN(lr=1e-3, x_size=1, u_size=1, z_size=30)
 
     for weightfile in tqdm.tqdm(sorted(kwargs["weightfiles"])):
         tqdm.tqdm.write(f"Using {weightfile} ...")
 
         agent.load(weightfile)
-        # agent.eval()
+        agent.eval()
 
         gandir = os.path.dirname(weightfile)
         testpath = os.path.join(

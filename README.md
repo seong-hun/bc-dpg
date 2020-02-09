@@ -25,3 +25,8 @@ To plot using `data/run.h5`:
 ```bash
 $ python main.py plot data/run.h5
 ```
+
+## TODO
+
+- Add click options at the top of the main.
+- Add a (CPU/GPU) multiprocessing function

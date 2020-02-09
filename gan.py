@@ -8,24 +8,56 @@ from torch.utils.data import DataLoader, Dataset
 
 import fym.logging as logging
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class LossWrapper:
-    def __init__(self, loss):
-        self.loss = loss
+class Discriminator(nn.Module):
+    def __init__(self, x_size, u_size):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Linear(u_size + x_size, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(128, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(64, 1),
+            nn.Sigmoid(),
+        )
 
-    def __call__(self, x, y):
-        target_tensor = self.get_target_tensor(x, y)
-        return self.loss(x, target_tensor)
+    def forward(self, xu):
+        out = self.model(xu)
+        return out
 
-    def get_target_tensor(self, x, y):
-        if y:
-            target_tensor = torch.tensor(1.0)
-        else:
-            target_tensor = torch.tensor(0.0)
-        return target_tensor.expand_as(x)
+
+class Generator(nn.Module):
+    def __init__(self, x_size, u_size, z_size):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Linear(z_size + x_size, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, u_size),
+        )
+
+    def forward(self, zx):
+        out = self.model(zx)
+        return out
 
 
 class GAN():
@@ -115,53 +147,20 @@ class GAN():
         self.net_g.eval()
 
 
-class Discriminator(nn.Module):
-    def __init__(self, x_size, u_size):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(u_size + x_size, 64),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(64, 128),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(128, 128),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(128, 64),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(64, 1),
-            nn.Sigmoid(),
-        )
+class LossWrapper:
+    def __init__(self, loss):
+        self.loss = loss
 
-    def forward(self, xu):
-        out = self.model(xu)
-        return out
+    def __call__(self, x, y):
+        target_tensor = self.get_target_tensor(x, y)
+        return self.loss(x, target_tensor)
 
-
-class Generator(nn.Module):
-    def __init__(self, x_size, u_size, z_size):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(z_size + x_size, 64),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(64, 128),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(128, 128),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(128, 64),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(64, u_size),
-        )
-
-    def forward(self, zx):
-        out = self.model(zx)
-        return out
+    def get_target_tensor(self, x, y):
+        if y:
+            target_tensor = torch.tensor(1.0)
+        else:
+            target_tensor = torch.tensor(0.0)
+        return target_tensor.expand_as(x)
 
 
 class DictDataset(Dataset):
