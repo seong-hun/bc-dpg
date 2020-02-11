@@ -26,8 +26,7 @@ def parse_file(files, ext="h5"):
     target = []
     for file in files:
         if os.path.isdir(file):
-            target += sorted(glob.glob(os.path.join(file, "." + ext)))
+            target += sorted(glob.glob(os.path.join(file, "*." + ext)))
         else:
             target += [file]
-
     return target

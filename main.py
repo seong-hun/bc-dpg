@@ -17,6 +17,15 @@ import agents
 import gan
 import utils
 
+PARAMS = {
+    "GAN": {
+        "x_size": 4,
+        "u_size": 4,
+        "z_size": 100,
+        "lr": 2e-4,
+    }
+}
+
 
 @click.group()
 def main():
@@ -29,19 +38,22 @@ def main():
 @click.option("--max-workers", "-m", default=None)
 def sample(**kwargs):
 
-    print("Sample trajectories ...")
+    max_workers = int(kwargs["max_workers"] or os.cpu_count())
+    assert max_workers <= os.cpu_count(), \
+        f"workers should be less than {os.cpu_count()}"
+    print(f"Sample trajectories with {max_workers} workers ...")
 
     prog = functools.partial(_sample_prog, log_dir=kwargs["log_dir"])
 
     t0 = time.time()
-    with ProcessPoolExecutor(kwargs["max_workers"]) as p:
+    with ProcessPoolExecutor(max_workers) as p:
         list(tqdm.tqdm(
             p.map(prog, range(kwargs["number"])),
             total=kwargs["number"]
         ))
 
     print(f"Elapsed time: {time.time() - t0:5.2f} sec"
-          f" > Finished - saved in {kwargs['log_dir']}")
+          f" > saved in \"{kwargs['log_dir']}\"")
 
 
 def _sample_prog(i, log_dir):
@@ -53,10 +65,7 @@ def _sample_prog(i, log_dir):
     agent = agents.BaseAgent(env, theta_init=0)
     agent.add_noise(scale=0.03, tau=2)
     file_name = f"{i:03d}.h5"
-    _sample(env, agent, log_dir, file_name)
 
-
-def _sample(env, agent, log_dir, file_name):
     logger = logging.Logger(
         log_dir=log_dir, file_name=file_name, max_len=100)
 
@@ -75,27 +84,50 @@ def _sample(env, agent, log_dir, file_name):
 
 
 @main.command()
-@click.argumet("sample", nargs=-1, type=click.Path())
+@click.argument("sample", nargs=-1, type=click.Path())
 @click.option("--all", "mode", flag_value="all", default=True)
 @click.option("--gan", "mode", flag_value="gan")
 @click.option("--copdac", "mode", flag_value="copdac")
-@click.option("--gan-lr", default=2e-4)
-@click.option("--out", "-o", "savepath", default="data/trained.h5")
-@click.option("--max-epoch", "-n", "max_epoch", default=1500)
+@click.option("--gan-lr", default=PARAMS["GAN"]["lr"])
+@click.option("--use-cuda", is_flag=True)
+@click.option("--gan-dir", default="data/gan")
+@click.option("--continue", "-c", nargs=1, type=click.Path(exists=True))
+@click.option("--max-epoch", "-n", "max_epoch", default=100)
+@click.option("--save-interval", "-s", default=10)
 @click.option("--batch-size", "-b", default=64)
+@click.option("--out", "-o", "savepath", default="data/trained.h5")
 def train(sample, **kwargs):
-    samplefiles = utils.parse_file(sample, ext=".h5")
+    samplefiles = utils.parse_file(sample, ext="h5")
 
     if kwargs["mode"] == "gan" or kwargs["mode"] == "all":
         torch.manual_seed(0)
         np.random.seed(0)
 
+        gandir = kwargs["gan_dir"]
+        histpath = os.path.join(gandir, "train_history.h5")
+
         print("Train GAN ...")
 
-        agent = gan.GAN(lr=kwargs["gan_lr"], x_size=4, u_size=4, z_size=100)
+        agent = gan.GAN(
+            lr=kwargs["gan_lr"],
+            x_size=PARAMS["GAN"]["x_size"],
+            u_size=PARAMS["GAN"]["u_size"],
+            z_size=PARAMS["GAN"]["z_size"],
+            use_cuda=kwargs["use_cuda"],
+        )
+
+        if kwargs["continue"] is not None:
+            epoch_start = agent.load(kwargs["continue"])
+            logger = logging.Logger(
+                path=histpath, max_len=kwargs["save_interval"], mode="r+")
+        else:
+            epoch_start = 0
+            logger = logging.Logger(
+                path=histpath, max_len=kwargs["save_interval"])
 
         t0 = time.time()
-        for epoch in tqdm.trange(kwargs["max_epoch"]):
+        for epoch in tqdm.trange(epoch_start,
+                                 epoch_start + 1 + kwargs["max_epoch"]):
             dataloader = gan.get_dataloader(
                 samplefiles, shuffle=True, batch_size=kwargs["batch_size"])
 
@@ -105,6 +137,14 @@ def train(sample, **kwargs):
                 agent.train()
                 loss_d += agent.loss_d.mean().detach().numpy()
                 loss_g += agent.loss_g.mean().detach().numpy()
+
+            logger.record(epoch=epoch, loss_d=loss_d, loss_g=loss_g)
+
+            if (epoch % kwargs["save_interval"] == 0
+                    or epoch == epoch_start + 1 + kwargs["max_epoch"]):
+                savepath = os.path.join(gandir, f"trained_{epoch:05d}.pth")
+                agent.save(epoch, savepath)
+                tqdm.tqdm.write(f"Weights are saved in {savepath}.")
 
         print(f"Elapsed time: {time.time() - t0:5.2f} sec")
 
@@ -215,16 +255,57 @@ def _run(env, agent, logger, expname, **kwargs):
 
 
 @main.command()
-@click.argument("path")
-@click.option("--train", "-t", is_flag=True)
-def plot(path, **kwargs):
+@click.argument("path", nargs=-1, type=click.Path())
+@click.option("--hist", "mode", flag_value="hist")
+@click.option("--gan", "mode", flag_value="gan")
+@click.option("--samples", type=click.Path(), default="data/samples")
+def test(path, mode, **kwargs):
+    if mode == "gan":
+        samplefiles = utils.parse_file([kwargs["samples"]], ext="h5")
+        trainfiles = utils.parse_file(path, ext="pth")
+        agent = gan.GAN(
+            lr=PARAMS["GAN"]["lr"],
+            x_size=PARAMS["GAN"]["x_size"],
+            u_size=PARAMS["GAN"]["u_size"],
+            z_size=PARAMS["GAN"]["z_size"],
+        )
+
+        for trainfile in trainfiles:
+            agent.load(trainfile)
+            agent.eval()
+
+            logger = logging.Logger(path="data/tmp.h5", max_len=500)
+
+            dataloader = gan.get_dataloader(samplefiles, shuffle=False)
+            for i, (state, action) in enumerate(tqdm.tqdm(dataloader)):
+                fake_action = agent.get_action(state)
+                state, action = map(torch.squeeze, (state, action))
+                fake_action = fake_action.ravel()
+                logger.record(
+                    state=state, action=action, fake_action=fake_action)
+
+            logger.close()
+
+            print(f"Test data is saved in {logger.path}")
+
+
+@main.command()
+@click.argument("path", nargs=1, type=click.Path())
+@click.option("--hist", "mode", flag_value="hist")
+@click.option("--gan", "mode", flag_value="gan")
+def plot(path, mode, **kwargs):
     import figures
 
-    if kwargs["train"]:
-        figures.train_plot(path)
-    else:
-        dataset = logging.load(path)
-        figures.plot_mult(dataset)
+    if mode == "hist":
+        figures.plot_hist(path)
+    if mode == "gan":
+        figures.plot_gan(path)
+
+    # if kwargs["train"]:
+    #     figures.train_plot(path)
+    # else:
+    #     dataset = logging.load(path)
+    #     figures.plot_mult(dataset)
 
     figures.show()
 

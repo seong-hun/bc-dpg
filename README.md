@@ -8,6 +8,11 @@ for Morphing Aircraft without Exploration
 
 [Github (private)](https://github.com/seong-hun/med-2020/tree/submitted)
 
+**Lab Seminar**:
+[PDF (priviate)](
+https://drive.google.com/file/d/1f1zddPFNfISP1pHkUacKMTVpD3YiormL/
+view?usp=sharing)
+
 
 ## Usage
 

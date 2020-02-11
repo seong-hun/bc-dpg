@@ -237,7 +237,8 @@ def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
         files = [files]
 
     dataloader = gan.get_dataloader(
-        files, shuffle=shuffle, batch_size=batch_size)
+        files, keys=("state", "action", "mask"),
+        shuffle=shuffle, batch_size=batch_size)
 
     loss_d = 0
     loss_g = 0

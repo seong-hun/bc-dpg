@@ -4,37 +4,47 @@ from cycler import cycler
 
 import fym.logging as logging
 
-canvas = []
-fig, axes = plt.subplots(2, 2, sharex=True, num="states")
-for ax in axes.flat:
-    ax.mod = 1
-axes[0, 0].set_ylabel(r"$v$ [m/s]")
-axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
-axes[0, 1].mod = np.rad2deg(1)
-axes[1, 0].set_ylabel(r"$q$ [deg/s]")
-axes[1, 0].mod = np.rad2deg(1)
-axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
-axes[1, 1].mod = np.rad2deg(1)
-axes[1, 0].set_xlabel("time [s]")
-axes[1, 1].set_xlabel("time [s]")
-canvas.append((fig, axes))
+plt.rc("font", **{
+    "family": "sans-serif",
+    "sans-serif": ["Helvetica"],
+})
+plt.rc("text", usetex=True)
+plt.rc("lines", linewidth=1)
+plt.rc("axes", grid=True)
+plt.rc("grid", linestyle="--", alpha=0.8)
+plt.rc("figure", figsize=[6, 4])
 
-fig, axes = plt.subplots(2, 2, sharex=True, num="control")
-for ax in axes.flat:
-    ax.mod = 1
-axes[0, 0].set_ylabel(r"$\delta_t$")
-axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
-axes[0, 1].mod = np.rad2deg(1)
-axes[1, 0].set_ylabel(r"$\eta_1$")
-axes[1, 1].set_ylabel(r"$\eta_2$")
-axes[1, 0].set_xlabel("time [s]")
-axes[1, 1].set_xlabel("time [s]")
-canvas.append((fig, axes))
+# canvas = []
+# fig, axes = plt.subplots(2, 2, sharex=True, num="states")
+# for ax in axes.flat:
+#     ax.mod = 1
+# axes[0, 0].set_ylabel(r"$v$ [m/s]")
+# axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
+# axes[0, 1].mod = np.rad2deg(1)
+# axes[1, 0].set_ylabel(r"$q$ [deg/s]")
+# axes[1, 0].mod = np.rad2deg(1)
+# axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
+# axes[1, 1].mod = np.rad2deg(1)
+# axes[1, 0].set_xlabel("time [s]")
+# axes[1, 1].set_xlabel("time [s]")
+# canvas.append((fig, axes))
 
-fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
-axes[0, 0].set_ylabel("reward")
-axes[0, 0].set_xlabel("time [s]")
-canvas.append((fig, axes))
+# fig, axes = plt.subplots(2, 2, sharex=True, num="control")
+# for ax in axes.flat:
+#     ax.mod = 1
+# axes[0, 0].set_ylabel(r"$\delta_t$")
+# axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
+# axes[0, 1].mod = np.rad2deg(1)
+# axes[1, 0].set_ylabel(r"$\eta_1$")
+# axes[1, 1].set_ylabel(r"$\eta_2$")
+# axes[1, 0].set_xlabel("time [s]")
+# axes[1, 1].set_xlabel("time [s]")
+# canvas.append((fig, axes))
+
+# fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
+# axes[0, 0].set_ylabel("reward")
+# axes[0, 0].set_xlabel("time [s]")
+# canvas.append((fig, axes))
 
 
 def plot_single(data, color="k", name=None):
@@ -107,6 +117,89 @@ def train_plot(savepath):
         data["theta"].reshape(-1, np.multiply(*data["theta"][0].shape)),
         color="k"
     )
+
+
+def plot_gan(path):
+    data = logging.load(path)
+
+    xlabels = (
+        r"$V_T$ [m/s]", r"$\alpha$ [deg]", r"$q$ [deg/s]", r"$\theta$ [deg]"
+    )
+    ulabels = (
+        r"$\delta_t$", r"$\delta_e$", r"$\eta_1$", r"$\eta_2$"
+    )
+
+    def plot_xu(canvas, i, j, data):
+        x, u, fake_u = (data[k] for k in ["state", "action", "fake_action"])
+
+        x = x[:, j]
+        u = u[:, i]
+        fake_u = fake_u[:, i]
+
+        xmin, xmax = x.min(), x.max()
+        umin, umax = u.min(), u.max()
+
+        fig, axes = canvas[0]
+
+        axes[i, 0].set_ylabel(ulabels[i])
+        axes[-1, 2 * j].set_xlabel(xlabels[j])
+        axes[-1, 2 * j + 1].set_xlabel(xlabels[j])
+
+        axes[i, 2 * j].set_xlim([xmin, xmax])
+        axes[i, 2 * j + 1].set_xlim([xmin, xmax])
+        axes[i, 2 * j].set_ylim([umin, umax])
+
+        axes[0, 2 * j].set_title("Real")
+        axes[0, 2 * j + 1].set_title("Fake")
+
+        ax = axes[i, 2 * j]
+        ax.plot(x, u, '.', markersize=2, mew=0, mfc=(0, 0, 0, 1))
+
+        ax = axes[i, 2 * j + 1]
+        ax.plot(x, fake_u, '.', markersize=2, mew=0, mfc=(0, 0, 0, 1))
+
+    canvas = []
+
+    fig, axes = plt.subplots(
+        4, 8, sharex=True, sharey=True, squeeze=False, num="real"
+    )
+    canvas.append((fig, axes))
+
+    for i in range(4):
+        for j in range(4):
+            plot_xu(canvas, i, j, data)
+
+    fig.tight_layout()
+
+
+def plot_hist(path):
+    # path = os.path.join(
+    #     obj.gan_dir,
+    #     os.path.relpath(os.path.dirname(testfile), obj.test_dir),
+    #     "train_history.h5"
+    # )
+
+    histdata = logging.load(path)
+
+    canvas = []
+
+    fig, axes = plt.subplots(1, 2, sharey=True, squeeze=False, num="loss")
+    axes[0, 0].set_ylabel(r"Loss")
+
+    axes[0, 0].set_xlabel(r"Epoch")
+    axes[0, 1].set_xlabel(r"Epoch")
+
+    axes[0, 0].set_title("Generator")
+    axes[0, 1].set_title("Discrimator")
+
+    canvas.append((fig, axes))
+
+    fig, axes = canvas[0]
+    ax = axes[0, 0]
+    ax.plot(histdata["epoch"], histdata["loss_g"])
+    ax = axes[0, 1]
+    ax.plot(histdata["epoch"], histdata["loss_d"])
+    fig.tight_layout()
 
 
 def show():

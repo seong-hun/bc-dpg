@@ -60,13 +60,13 @@ class Generator(nn.Module):
 
 class GAN():
     def __init__(self, lr, x_size, u_size, z_size,
-                 is_cuda=False, lambda_l1=0.01):
+                 use_cuda=False, lambda_l1=0.01):
         self.z_size = z_size
         self.lambda_l1 = lambda_l1
         self.net_d = Discriminator(x_size=x_size, u_size=u_size)
         self.net_g = Generator(x_size=x_size, u_size=u_size, z_size=z_size)
         self.device = torch.device(
-            "cuda" if torch.cuda.is_available() and is_cuda else "cpu")
+            "cuda" if torch.cuda.is_available() and use_cuda else "cpu")
 
         self.initialize(self.net_d)
         self.initialize(self.net_g)
@@ -93,7 +93,6 @@ class GAN():
         self.fake_u = self.net_g(zx)  # G(x)
 
     def get_action(self, x):
-        x = torch.tensor(x).float()
         zx = torch.cat((torch.randn(len(x), self.z_size), x), 1)
         return self.net_g(zx).detach().numpy()  # G(x)
 
@@ -191,5 +190,5 @@ class DictDataset(Dataset):
         return self.len
 
 
-def get_dataloader(sample_files, keys=("state", "action", "mask"), **kwargs):
+def get_dataloader(sample_files, keys=("state", "action"), **kwargs):
     return DataLoader(DictDataset(sample_files, keys), **kwargs)
