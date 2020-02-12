@@ -59,7 +59,7 @@ class Generator(nn.Module):
 
 
 class GAN():
-    def __init__(self, lr, x_size, u_size, z_size,
+    def __init__(self, x_size, u_size, z_size, lr=2e-4,
                  use_cuda=False, lambda_l1=0.01):
         self.z_size = z_size
         self.lambda_l1 = lambda_l1
@@ -175,12 +175,16 @@ class DictDataset(Dataset):
 
         data_all = [logging.load(name) for name in file_names]
         self.keys = keys if not isinstance(keys, str) else (keys, )
-        self.data = {
+
+        _data = {
             k: torch.cat([
                 torch.tensor(data[k]).float()
-                for data in data_all])
+                for data in data_all
+            ])
             for k in self.keys
         }
+
+        self.data = _data
         self.len = len(self.data[self.keys[0]])
 
     def __getitem__(self, idx):

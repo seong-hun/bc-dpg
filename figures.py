@@ -14,40 +14,40 @@ plt.rc("axes", grid=True)
 plt.rc("grid", linestyle="--", alpha=0.8)
 plt.rc("figure", figsize=[6, 4])
 
-# canvas = []
-# fig, axes = plt.subplots(2, 2, sharex=True, num="states")
-# for ax in axes.flat:
-#     ax.mod = 1
-# axes[0, 0].set_ylabel(r"$v$ [m/s]")
-# axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
-# axes[0, 1].mod = np.rad2deg(1)
-# axes[1, 0].set_ylabel(r"$q$ [deg/s]")
-# axes[1, 0].mod = np.rad2deg(1)
-# axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
-# axes[1, 1].mod = np.rad2deg(1)
-# axes[1, 0].set_xlabel("time [s]")
-# axes[1, 1].set_xlabel("time [s]")
-# canvas.append((fig, axes))
-
-# fig, axes = plt.subplots(2, 2, sharex=True, num="control")
-# for ax in axes.flat:
-#     ax.mod = 1
-# axes[0, 0].set_ylabel(r"$\delta_t$")
-# axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
-# axes[0, 1].mod = np.rad2deg(1)
-# axes[1, 0].set_ylabel(r"$\eta_1$")
-# axes[1, 1].set_ylabel(r"$\eta_2$")
-# axes[1, 0].set_xlabel("time [s]")
-# axes[1, 1].set_xlabel("time [s]")
-# canvas.append((fig, axes))
-
-# fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
-# axes[0, 0].set_ylabel("reward")
-# axes[0, 0].set_xlabel("time [s]")
-# canvas.append((fig, axes))
-
 
 def plot_single(data, color="k", name=None):
+    canvas = []
+    fig, axes = plt.subplots(2, 2, sharex=True, num="states")
+    for ax in axes.flat:
+        ax.mod = 1
+    axes[0, 0].set_ylabel(r"$v$ [m/s]")
+    axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
+    axes[0, 1].mod = np.rad2deg(1)
+    axes[1, 0].set_ylabel(r"$q$ [deg/s]")
+    axes[1, 0].mod = np.rad2deg(1)
+    axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
+    axes[1, 1].mod = np.rad2deg(1)
+    axes[1, 0].set_xlabel("time [s]")
+    axes[1, 1].set_xlabel("time [s]")
+    canvas.append((fig, axes))
+
+    fig, axes = plt.subplots(2, 2, sharex=True, num="control")
+    for ax in axes.flat:
+        ax.mod = 1
+    axes[0, 0].set_ylabel(r"$\delta_t$")
+    axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
+    axes[0, 1].mod = np.rad2deg(1)
+    axes[1, 0].set_ylabel(r"$\eta_1$")
+    axes[1, 1].set_ylabel(r"$\eta_2$")
+    axes[1, 0].set_xlabel("time [s]")
+    axes[1, 1].set_xlabel("time [s]")
+    canvas.append((fig, axes))
+
+    fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
+    axes[0, 0].set_ylabel("reward")
+    axes[0, 0].set_xlabel("time [s]")
+    canvas.append((fig, axes))
+
     time = data["time"]
 
     axes = canvas[0][1]
@@ -90,7 +90,7 @@ def plot_mult(dataset, color_cycle=None, names=None):
 
 
 def train_plot(savepath):
-    data = logging.load(savepath)
+    data = logging.load(savepath)["BaseEnv-COPDAC"]
     epoch = data["epoch"]
 
     canvas = []

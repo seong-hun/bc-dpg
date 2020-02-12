@@ -107,13 +107,13 @@ plot_single(
     color="r",
     linestyle="--",
 )
-plot_single(
-    data_run["BaseEnv-RegCOPDAC"],
-    data_trained["BaseEnv-RegCOPDAC"],
-    name="Constrained-COPDAC",
-    color="b",
-    linestyle="-",
-)
+# plot_single(
+#     data_run["BaseEnv-RegCOPDAC"],
+#     data_trained["BaseEnv-RegCOPDAC"],
+#     name="Constrained-COPDAC",
+#     color="b",
+#     linestyle="-",
+# )
 
 for window in canvas:
     fig, axes = window
