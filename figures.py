@@ -15,59 +15,76 @@ plt.rc("grid", linestyle="--", alpha=0.8)
 plt.rc("figure", figsize=[6, 4])
 
 
-def plot_single(data, color="k", name=None):
-    canvas = []
-    fig, axes = plt.subplots(2, 2, sharex=True, num="states")
-    for ax in axes.flat:
-        ax.mod = 1
-    axes[0, 0].set_ylabel(r"$v$ [m/s]")
-    axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
-    axes[0, 1].mod = np.rad2deg(1)
-    axes[1, 0].set_ylabel(r"$q$ [deg/s]")
-    axes[1, 0].mod = np.rad2deg(1)
-    axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
-    axes[1, 1].mod = np.rad2deg(1)
-    axes[1, 0].set_xlabel("time [s]")
-    axes[1, 1].set_xlabel("time [s]")
-    canvas.append((fig, axes))
+def plot_single(path, canvas=[], color="k", name=None):
+    data = logging.load(path)
 
-    fig, axes = plt.subplots(2, 2, sharex=True, num="control")
-    for ax in axes.flat:
-        ax.mod = 1
-    axes[0, 0].set_ylabel(r"$\delta_t$")
-    axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
-    axes[0, 1].mod = np.rad2deg(1)
-    axes[1, 0].set_ylabel(r"$\eta_1$")
-    axes[1, 1].set_ylabel(r"$\eta_2$")
-    axes[1, 0].set_xlabel("time [s]")
-    axes[1, 1].set_xlabel("time [s]")
-    canvas.append((fig, axes))
+    def create_canvas():
+        fig, axes = plt.subplots(2, 2, sharex=True, num="states")
+        for ax in axes.flat:
+            ax.mod = 1
+        axes[0, 0].set_ylabel(r"$v$ [m/s]")
+        axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
+        axes[0, 1].mod = np.rad2deg(1)
+        axes[1, 0].set_ylabel(r"$q$ [deg/s]")
+        axes[1, 0].mod = np.rad2deg(1)
+        axes[1, 1].set_ylabel(r"$\gamma$ [deg]")
+        axes[1, 1].mod = np.rad2deg(1)
+        axes[1, 0].set_xlabel("time [s]")
+        axes[1, 1].set_xlabel("time [s]")
+        canvas.append((fig, axes))
 
-    fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
-    axes[0, 0].set_ylabel("reward")
-    axes[0, 0].set_xlabel("time [s]")
-    canvas.append((fig, axes))
+        fig, axes = plt.subplots(2, 2, sharex=True, num="control")
+        for ax in axes.flat:
+            ax.mod = 1
+        axes[0, 0].set_ylabel(r"$\delta_t$")
+        axes[0, 1].set_ylabel(r"$\delta_e$ [deg]")
+        axes[0, 1].mod = np.rad2deg(1)
+        axes[1, 0].set_ylabel(r"$\eta_1$")
+        axes[1, 1].set_ylabel(r"$\eta_2$")
+        axes[1, 0].set_xlabel("time [s]")
+        axes[1, 1].set_xlabel("time [s]")
+        canvas.append((fig, axes))
+
+        fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
+        axes[0, 0].set_ylabel("reward")
+        axes[0, 0].set_xlabel("time [s]")
+        canvas.append((fig, axes))
+
+        return canvas
+
+    if not canvas:
+        canvas = create_canvas()
 
     time = data["time"]
 
-    axes = canvas[0][1]
+    legend_line = []
+
+    fig, axes = canvas[0]
     for ax, x in zip(axes.flat, data["state"].T):
         ln, = ax.plot(time, x * ax.mod, color=color)
-    ln.set_label(name)
+    fig.tight_layout()
+    legend_line.append(ln)
 
-    axes = canvas[1][1]
+    fig, axes = canvas[1]
     for ax, u in zip(axes.flat, data["action"].T):
         ln, = ax.plot(time, u * ax.mod, color=color)
-    ln.set_label(name)
+    fig.tight_layout()
+    legend_line.append(ln)
 
-    axes = canvas[2][1]
+    fig, axes = canvas[2]
     ln, = axes[0, 0].plot(time, data["reward"], color=color)
-    ln.set_label(name)
+    fig.tight_layout()
+    legend_line.append(ln)
 
-    for window in canvas:
-        fig, axes = window
-        axes[0, 0].legend(*axes[-1, -1].get_legend_handles_labels())
-        fig.tight_layout()
+    if name is not None:
+        for ln in legend_line:
+            ln.set_label(name)
+
+        for window in canvas:
+            fig, axes = window
+            axes[0, 0].legend(*axes[-1, -1].get_legend_handles_labels())
+
+    return canvas
 
 
 def plot_mult(dataset, color_cycle=None, names=None):

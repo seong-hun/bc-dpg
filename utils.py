@@ -23,6 +23,8 @@ def get_poly(p, deg=2):
 
 
 def parse_file(files, ext="h5"):
+    if isinstance(files, str):
+        files = [files]
     target = []
     for file in files:
         if os.path.isdir(file):

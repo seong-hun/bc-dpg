@@ -10,8 +10,6 @@ from fym.utils.linearization import jacob_analytic
 
 from utils import get_poly
 
-np.random.seed(1)
-
 
 class BaseEnv(fym.core.BaseEnv):
     Q = np.diag([1, 100, 10, 100])

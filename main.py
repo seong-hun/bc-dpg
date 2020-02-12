@@ -23,7 +23,17 @@ PARAMS = {
         "u_size": 4,
         "z_size": 100,
         "lr": 2e-4,
-    }
+    },
+    "COPDAC": {
+        "lrw": 5e-2,
+        "lrv": 5e-2,
+        "lrtheta": 1e-2,
+        "w_init": 0.03,
+        "v_init": 0.03,
+        "theta_init": 0,
+        "maxlen": 100,
+        "batch_size": 64,
+    },
 }
 
 
@@ -37,7 +47,6 @@ def main():
 @click.option("--log-dir", default="data/samples")
 @click.option("--max-workers", "-m", default=None)
 def sample(**kwargs):
-
     max_workers = int(kwargs["max_workers"] or os.cpu_count())
     assert max_workers <= os.cpu_count(), \
         f"workers should be less than {os.cpu_count()}"
@@ -57,6 +66,7 @@ def sample(**kwargs):
 
 
 def _sample_prog(i, log_dir):
+    np.random.seed(i)
     env = envs.BaseEnv(
         initial_perturb=[0, 0, 0, 0.1],
         dt=0.01, max_t=20,
@@ -135,7 +145,7 @@ def train(sample, mode, **kwargs):
                 samplefiles, shuffle=True, batch_size=kwargs["batch_size"])
 
             loss_d = loss_g = 0
-            for i, data in enumerate(dataloader):
+            for i, data in enumerate(tqdm.tqdm(dataloader)):
                 agent.set_input(data)
                 agent.train()
                 loss_d += agent.loss_d.mean().detach().numpy()
@@ -161,9 +171,15 @@ def train(sample, mode, **kwargs):
         agentname = "COPDAC"
         Agent = getattr(agents, agentname)
         agent = Agent(
-            env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
-            w_init=0.03, v_init=0.03, theta_init=0,
-            maxlen=100, batch_size=64
+            env,
+            lrw=PARAMS["COPDAC"]["lrw"],
+            lrv=PARAMS["COPDAC"]["lrv"],
+            lrtheta=PARAMS["COPDAC"]["lrtheta"],
+            w_init=PARAMS["COPDAC"]["w_init"],
+            v_init=PARAMS["COPDAC"]["v_init"],
+            theta_init=PARAMS["COPDAC"]["lrv"],
+            maxlen=PARAMS["COPDAC"]["maxlen"],
+            batch_size=PARAMS["COPDAC"]["batch_size"],
         )
 
         if kwargs["with_gan"]:
@@ -299,12 +315,18 @@ def _run(env, agent, logger, expname, **kwargs):
 
 @main.command()
 @click.argument("path", nargs=1, type=click.Path())
+@click.option("--sample", "mode", flag_value="sample")
 @click.option("--hist", "mode", flag_value="hist")
 @click.option("--gan", "mode", flag_value="gan")
 @click.option("--copdac", "mode", flag_value="copdac")
 def plot(path, mode, **kwargs):
     import figures
 
+    if mode == "sample":
+        files = utils.parse_file(path)
+        canvas = []
+        for file in tqdm.tqdm(files):
+            canvas = figures.plot_single(file, canvas=canvas)
     if mode == "hist":
         figures.plot_hist(path)
     if mode == "gan":

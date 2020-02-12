@@ -60,7 +60,6 @@ class COPDAC(BaseAgent):
         self.lrw = lrw
         self.lrv = lrv
         self.lrtheta = lrtheta
-        self.buffer = deque(maxlen=maxlen)
         self.batch_size = batch_size
 
         self.n_phi = self.phi(self.trim_x).size
@@ -76,9 +75,6 @@ class COPDAC(BaseAgent):
         time = self.clock.get()
         theta = self.theta + noise_scale * np.exp(-time/2) * np.random.randn()
         return self.get_behavior(theta, obs)
-
-    def append(self, obs, action, reward, next_obs):
-        self.buffer.append((obs, action, reward, next_obs))
 
     def phi_v(self, x, deg=2):
         return utils.get_poly(x, deg=deg)
