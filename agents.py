@@ -94,7 +94,7 @@ class COPDAC(BaseAgent):
     def load(self, path):
         data = logging.load(path)
         self.load_weights(data)
-        return data["epoch"], data["i"]
+        return int(data["epoch"][-1] + 1), int(data["i"][-1] + 1)
 
     def load_weights(self, data):
         self.theta = data["theta"][-1]
@@ -148,39 +148,40 @@ class COPDAC(BaseAgent):
         self.delta = delta / n
 
     def step(self):
-        if np.abs(self.delta) > 0.005:
+        if np.abs(self.delta) > 0.001:
             self.w = self.w + self.lrw * self.grad_w
             self.v = self.v + self.lrv * self.grad_v
             add_grad = 0
             if self.is_gan:
-                add_grad += - self.lrg * self.gan_grad()
+                add_grad += self.lrg * self.gan_grad()
             if self.is_reg:
                 add_grad += - self.lrc * self.theta
 
-            # print(np.abs(add_grad).max(), np.abs(self.lrc*self.theta).max())
             self.theta = (
-                self.theta + self.lrtheta * self.grad_theta
-                + add_grad)
+                self.theta + self.lrtheta * self.grad_theta + add_grad
+            )
 
     def gan_grad(self):
-        # x, u, _, _ = [torch.tensor(d).float() for d in self.data]
         x = self.data[0]
         u = np.vstack([self.get_behavior(self.theta, xi) for xi in x])
-        x = torch.tensor(x).float()
         xu = torch.tensor(np.hstack((x, u))).float()
         xu.requires_grad = True
-        loss_d = self.gan.net_d(xu).mean()
-        loss_d.backward()
+        self.loss_d = self.gan.criterion(self.gan.net_d(xu).mean(), True)
+        self.loss_d.backward()
         grad_du = np.array(xu.grad[:, 4:], dtype=np.float)  # dD / du
         grad = 0
         for xi, grad_dui in zip(x, grad_du):
             dpdt = self.dpi_dtheta(xi)  # du / dtheta
-            grad += dpdt.dot(grad_dui)
-        return grad.reshape(self.theta.shape) / len(x)
+            grad += - dpdt.dot(grad_dui)
+        grad = grad.reshape(self.theta.shape) / len(x)
+        return grad
 
     def train(self):
         self.backward()
         self.step()
+
+    def get_losses(self):
+        return {"gan": self.loss_d.detach().numpy(), "delta": self.delta}
 
 
 class RegCOPDAC(COPDAC):

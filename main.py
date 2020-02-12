@@ -29,7 +29,7 @@ PARAMS = {
         "lrv": 1e-2,
         "lrtheta": 1e-2,
         "lrc": 2e-3,
-        "lrg": 2e-1,
+        "lrg": 4e-1,
         "w_init": 0.03,
         "v_init": 0.03,
         "theta_init": 0,
@@ -212,7 +212,7 @@ def train(sample, mode, **kwargs):
                 batch_size=64
             )
 
-            for data in tqdm.tqdm(dataloader):
+            for data in tqdm.tqdm(dataloader, desc=f"Epoch {epoch}"):
                 agent.set_input(data)
                 agent.train()
 
@@ -223,7 +223,7 @@ def train(sample, mode, **kwargs):
                         w=agent.w,
                         v=agent.v,
                         theta=agent.theta,
-                        delta=agent.delta
+                        loss=agent.get_losses()
                     )
 
                 i += 1
@@ -296,8 +296,10 @@ def run(**kwargs):
     if kwargs["with_plot"]:
         import figures
 
-        dataset = logging.load(kwargs["out"])
-        figures.plot_mult(dataset)
+        files = utils.parse_file(kwargs["out"])
+        canvas = []
+        for file in tqdm.tqdm(files):
+            canvas = figures.plot_single(file, canvas=canvas)
 
         figures.show()
 

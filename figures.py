@@ -15,14 +15,14 @@ plt.rc("grid", linestyle="--", alpha=0.8)
 plt.rc("figure", figsize=[6, 4])
 
 
-def plot_single(path, canvas=[], color="k", name=None):
+def plot_single(path, canvas=[], name=None, **kwargs):
     data = logging.load(path)
 
     def create_canvas():
         fig, axes = plt.subplots(2, 2, sharex=True, num="states")
         for ax in axes.flat:
             ax.mod = 1
-        axes[0, 0].set_ylabel(r"$v$ [m/s]")
+        axes[0, 0].set_ylabel(r"$V_T$ [m/s]")
         axes[0, 1].set_ylabel(r"$\alpha$ [deg]")
         axes[0, 1].mod = np.rad2deg(1)
         axes[1, 0].set_ylabel(r"$q$ [deg/s]")
@@ -45,11 +45,6 @@ def plot_single(path, canvas=[], color="k", name=None):
         axes[1, 1].set_xlabel("time [s]")
         canvas.append((fig, axes))
 
-        fig, axes = plt.subplots(1, 1, sharex=True, squeeze=False, num="reward")
-        axes[0, 0].set_ylabel("reward")
-        axes[0, 0].set_xlabel("time [s]")
-        canvas.append((fig, axes))
-
         return canvas
 
     if not canvas:
@@ -61,18 +56,13 @@ def plot_single(path, canvas=[], color="k", name=None):
 
     fig, axes = canvas[0]
     for ax, x in zip(axes.flat, data["state"].T):
-        ln, = ax.plot(time, x * ax.mod, color=color)
+        ln, = ax.plot(time, x * ax.mod, **kwargs)
     fig.tight_layout()
     legend_line.append(ln)
 
     fig, axes = canvas[1]
     for ax, u in zip(axes.flat, data["action"].T):
-        ln, = ax.plot(time, u * ax.mod, color=color)
-    fig.tight_layout()
-    legend_line.append(ln)
-
-    fig, axes = canvas[2]
-    ln, = axes[0, 0].plot(time, data["reward"], color=color)
+        ln, = ax.plot(time, u * ax.mod, **kwargs)
     fig.tight_layout()
     legend_line.append(ln)
 
@@ -106,34 +96,49 @@ def plot_mult(dataset, color_cycle=None, names=None):
     plt.show()
 
 
-def train_plot(savepath):
-    data = logging.load(savepath)["BaseEnv-COPDAC"]
+def train_plot(savepath, **kwargs):
+    data = logging.load(savepath)
     epoch = data["i"]
 
     canvas = []
-    fig, axes = plt.subplots(3, 1, sharex=True, squeeze=False)
-    axes[0, 0].set_ylabel(r"$w$")
-    axes[1, 0].set_ylabel(r"$v$")
-    axes[2, 0].set_ylabel(r"$\theta$")
-    axes[2, 0].set_xlabel("epoch")
+    fig, axes = plt.subplots(2, 2, sharex=True, num="hist")
+    axes[0, 0].set_ylabel(r"$\delta$")
+    axes[0, 1].set_ylabel(r"G Loss")
+    axes[1, 0].set_ylabel(r"$w, v$")
+    axes[1, 1].set_ylabel(r"$\theta$")
+    axes[1, 0].set_xlabel("Epoch")
+    axes[1, 1].set_xlabel("Epoch")
     canvas.append((fig, axes))
 
-    axes = canvas[0][1]
+    fig, axes = canvas[0]
+    epoch = data["i"]
     axes[0, 0].plot(
         epoch,
+        data["loss"]["delta"].reshape(-1, data["loss"]["delta"][0].size),
+        **kwargs
+    )
+    axes[0, 1].plot(
+        epoch,
+        data["loss"]["gan"].reshape(-1, data["loss"]["gan"][0].size),
+        **kwargs
+    )
+    axes[1, 0].plot(
+        epoch,
         data["w"].reshape(-1, data["w"][0].size),
-        color="k"
+        **kwargs
     )
     axes[1, 0].plot(
         epoch,
         data["v"].reshape(-1, data["v"][0].size),
-        color="k"
+        **kwargs
     )
-    axes[2, 0].plot(
+    ln, *_ = axes[1, 1].plot(
         epoch,
-        data["theta"].reshape(-1, np.multiply(*data["theta"][0].shape)),
-        color="k"
+        data["theta"].reshape(
+            -1, np.multiply(*data["theta"][0].shape)),
+        **kwargs
     )
+    fig.tight_layout()
 
 
 def plot_gan(path):
