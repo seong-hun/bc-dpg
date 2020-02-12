@@ -6,6 +6,8 @@ import random
 import torch
 import torch.nn as nn
 
+import fym.logging as logging
+
 import utils
 import gan
 
@@ -26,7 +28,7 @@ class BaseAgent:
 
     def get_action(self, obs):
         if not self.noise:
-            return self.get_behaviour(self.theta, obs)
+            return self.get_behavior(self.theta, obs)
         else:
             time = self.clock.get()
             theta = self.theta + (
@@ -77,8 +79,8 @@ class COPDAC(BaseAgent):
         return self.get_behavior(theta, obs)
 
     def phi_v(self, x, deg=2):
-        return utils.get_poly(x, deg=deg)
-        # return np.hstack((x, x**2))
+        # return utils.get_poly(x, deg=deg)
+        return np.hstack((x, x**2))
 
     def phi_w(self, x, u, theta):
         return self.dpi_dtheta(x).dot(u - np.dot(self.phi(x), theta))
@@ -89,15 +91,21 @@ class COPDAC(BaseAgent):
     def dpi_dtheta(self, x):
         return np.kron(np.eye(self.m), self.phi(x)).T
 
+    def load(self, path):
+        data = logging.load(path)
+        self.load_weights(data)
+        return data["epoch"], data["i"]
+
     def load_weights(self, data):
         self.theta = data["theta"][-1]
         self.w = data["w"][-1]
         self.v = data["v"][-1]
 
-    def set_gan(self, path):
+    def set_gan(self, path, lrg):
         self.gan = gan.GAN(x_size=4, u_size=4, z_size=100)
         self.gan.load(path)
         self.gan.eval()
+        self.lrg = lrg
         self.is_gan = True
 
     def set_reg(self, lrc):
@@ -125,43 +133,50 @@ class COPDAC(BaseAgent):
                     + self.v.dot(self.phi_v(x))
                 )
             )
-            if np.abs(tderror) > 0.0001:
-                grad_w += - tderror * self.phi_w(x, bu, self.theta)
-                grad_v += - tderror * self.phi_v(x)
-                dpdt = self.dpi_dtheta(x)
-                grad_theta += dpdt.dot(dpdt.T).dot(self.w)
+
+            grad_w += - tderror * self.phi_w(x, bu, self.theta)
+            grad_v += - tderror * self.phi_v(x)
+            dpdt = self.dpi_dtheta(x)
+            grad_theta += dpdt.dot(dpdt.T).dot(self.w)
 
             delta += tderror
 
         n = len(self.data[0])
-        self.grad_w = - self.lrw * grad_w / n
-        self.grad_v = - self.lrv * grad_v / n
-        self.grad_theta = (
-            - self.lrtheta * grad_theta.reshape(self.theta.shape) / n
-        )
+        self.grad_w = - grad_w / n
+        self.grad_v = - grad_v / n
+        self.grad_theta = - grad_theta.reshape(self.theta.shape) / n
         self.delta = delta / n
 
     def step(self):
-        self.w += self.grad_w
-        self.v += self.grad_v
-        new_theta = self.theta + self.grad_theta
-        if self.is_gan:
-            new_theta += - self.gan_grad()
-        if self.is_reg:
-            new_theta += - self.lrc * self.theta
-        self.theta = new_theta
+        if np.abs(self.delta) > 0.005:
+            self.w = self.w + self.lrw * self.grad_w
+            self.v = self.v + self.lrv * self.grad_v
+            add_grad = 0
+            if self.is_gan:
+                add_grad += - self.lrg * self.gan_grad()
+            if self.is_reg:
+                add_grad += - self.lrc * self.theta
+
+            # print(np.abs(add_grad).max(), np.abs(self.lrc*self.theta).max())
+            self.theta = (
+                self.theta + self.lrtheta * self.grad_theta
+                + add_grad)
 
     def gan_grad(self):
-        x, u, _, _ = [torch.tensor(d).float() for d in self.data]
-        xu = torch.cat((x, u), 1)
+        # x, u, _, _ = [torch.tensor(d).float() for d in self.data]
+        x = self.data[0]
+        u = np.vstack([self.get_behavior(self.theta, xi) for xi in x])
+        x = torch.tensor(x).float()
+        xu = torch.tensor(np.hstack((x, u))).float()
         xu.requires_grad = True
-        loss_d = self.gan.net_d(xu)
+        loss_d = self.gan.net_d(xu).mean()
         loss_d.backward()
         grad_du = np.array(xu.grad[:, 4:], dtype=np.float)  # dD / du
-        x = np.array(x, dtype=np.float)
-        dpdt = self.dpi_dtheta(x)  # du / dtheta
-        grad = dpdt.dot(grad_du)
-        return grad
+        grad = 0
+        for xi, grad_dui in zip(x, grad_du):
+            dpdt = self.dpi_dtheta(xi)  # du / dtheta
+            grad += dpdt.dot(grad_dui)
+        return grad.reshape(self.theta.shape) / len(x)
 
     def train(self):
         self.backward()

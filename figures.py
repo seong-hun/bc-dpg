@@ -108,7 +108,7 @@ def plot_mult(dataset, color_cycle=None, names=None):
 
 def train_plot(savepath):
     data = logging.load(savepath)["BaseEnv-COPDAC"]
-    epoch = data["epoch"]
+    epoch = data["i"]
 
     canvas = []
     fig, axes = plt.subplots(3, 1, sharex=True, squeeze=False)
@@ -142,16 +142,18 @@ def plot_gan(path):
     xlabels = (
         r"$V_T$ [m/s]", r"$\alpha$ [deg]", r"$q$ [deg/s]", r"$\theta$ [deg]"
     )
+    xmod = [1, np.rad2deg(1), np.rad2deg(1), np.rad2deg(1)]
     ulabels = (
         r"$\delta_t$", r"$\delta_e$", r"$\eta_1$", r"$\eta_2$"
     )
+    umod = [1, np.rad2deg(1), 1, 1]
 
     def plot_xu(canvas, i, j, data):
         x, u, fake_u = (data[k] for k in ["state", "action", "fake_action"])
 
-        x = x[:, j]
-        u = u[:, i]
-        fake_u = fake_u[:, i]
+        x = x[:, j] * xmod[j]
+        u = u[:, i] * umod[i]
+        fake_u = fake_u[:, i] * xmod[i]
 
         xmin, xmax = x.min(), x.max()
         umin, umax = u.min(), u.max()

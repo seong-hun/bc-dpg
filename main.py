@@ -25,9 +25,11 @@ PARAMS = {
         "lr": 2e-4,
     },
     "COPDAC": {
-        "lrw": 5e-2,
-        "lrv": 5e-2,
+        "lrw": 1e-2,
+        "lrv": 1e-2,
         "lrtheta": 1e-2,
+        "lrc": 2e-3,
+        "lrg": 2e-1,
         "w_init": 0.03,
         "v_init": 0.03,
         "theta_init": 0,
@@ -165,8 +167,8 @@ def train(sample, mode, **kwargs):
         np.random.seed(4)
 
         env = envs.BaseEnv(initial_perturb=[0, 0, 0, 0.2])
-        logger = logging.Logger(
-            log_dir=".", file_name=kwargs["savepath"], max_len=100)
+
+        copdacdir = kwargs["copdac_dir"]
 
         agentname = "COPDAC"
         Agent = getattr(agents, agentname)
@@ -182,19 +184,26 @@ def train(sample, mode, **kwargs):
             batch_size=PARAMS["COPDAC"]["batch_size"],
         )
 
+        expname = "-".join([type(n).__name__ for n in (env, agent)])
         if kwargs["with_gan"]:
-            agent.set_gan(kwargs["with_gan"])
+            expname += "-gan"
+            agent.set_gan(kwargs["with_gan"], PARAMS["COPDAC"]["lrg"])
 
         if kwargs["with_reg"]:
-            agent.set_reg(2e-3)
+            expname += "-reg"
+            agent.set_reg(PARAMS["COPDAC"]["lrc"])
+
+        histpath = os.path.join(copdacdir, expname + ".h5")
+        if kwargs["continue"] is not None:
+            epoch_start, i = agent.load(kwargs["continue"])
+            logger = logging.Logger(path=histpath, max_len=100, mode="r+")
+        else:
+            epoch_start, i = 0, 0
+            logger = logging.Logger(path=histpath, max_len=100)
 
         print(f"Training {agentname}...")
 
-        expname = "-".join([type(n).__name__ for n in (env, agent)])
-
-        epoch_start = 0
         epoch_end = epoch_start + kwargs["max_epoch"]
-        i = 0
         for epoch in tqdm.trange(epoch_start, epoch_end):
             dataloader = gan.get_dataloader(
                 samplefiles,
@@ -208,15 +217,14 @@ def train(sample, mode, **kwargs):
                 agent.train()
 
                 if i % kwargs["save_interval"] == 0 or i == len(dataloader):
-                    logger.record(**{
-                        expname: dict(
-                            epoch=i,
-                            w=agent.w,
-                            v=agent.v,
-                            theta=agent.theta,
-                            delta=agent.delta
-                        )
-                    })
+                    logger.record(
+                        epoch=epoch,
+                        i=i,
+                        w=agent.w,
+                        v=agent.v,
+                        theta=agent.theta,
+                        delta=agent.delta
+                    )
 
                 i += 1
 
@@ -259,29 +267,29 @@ def test(path, mode, **kwargs):
 
 
 @main.command()
-@click.option("--trained", "-w", default="data/trained.h5")
+@click.option("--trained", "-w", default="data/copdac/BaseEnv-COPDAC-gan.h5")
 @click.option("--out", "-o", default="data/run.h5")
 @click.option("--with-plot", "-p", is_flag=True)
 def run(**kwargs):
     logger = logging.Logger(
         log_dir=".", file_name=kwargs["out"], max_len=100)
-    dataset = logging.load(kwargs["trained"])
-    for expname, data in dataset.items():
-        envname, agentname = expname.split("-")
-        env = getattr(envs, envname)(
-            initial_perturb=[1, 0.0, 0, np.deg2rad(10)],
-            dt=0.01, max_t=40, solver="rk4",
-            ode_step_len=1
-        )
-        agent = getattr(agents, agentname)(
-            env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
-            w_init=0.03, v_init=0.03, theta_init=0,
-            maxlen=100, batch_size=16
-        )
-        agent.load_weights(data)
+    data = logging.load(kwargs["trained"])
+    expname = os.path.basename(kwargs["trained"])
+    envname, agentname, *_ = expname.split("-")
+    env = getattr(envs, envname)(
+        initial_perturb=[1, 0.0, 0, np.deg2rad(10)],
+        dt=0.01, max_t=40, solver="rk4",
+        ode_step_len=1
+    )
+    agent = getattr(agents, agentname)(
+        env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
+        w_init=0.03, v_init=0.03, theta_init=0,
+        maxlen=100, batch_size=16
+    )
+    agent.load_weights(data)
 
-        print(f"Runnning {expname} ...")
-        _run(env, agent, logger, expname, **kwargs)
+    print(f"Runnning {expname} ...")
+    _run(env, agent, logger, expname, **kwargs)
 
     logger.close()
 
@@ -302,7 +310,7 @@ def _run(env, agent, logger, expname, **kwargs):
         action = agent.get_action(obs)
         next_obs, reward, done, info = env.step(action)
 
-        logger.record(**{expname: info})
+        logger.record(**info)
 
         obs = next_obs
 

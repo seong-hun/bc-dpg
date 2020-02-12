@@ -21,7 +21,7 @@ plt.rc("grid", linestyle="--", alpha=0.8)
 plt.rc("figure", figsize=[6, 4])
 
 data_run = logging.load("data/run.h5")
-data_trained = logging.load("data/trained.h5")
+data_trained = logging.load("data/copdac/BaseEnv-COPDAC-gan.h5")
 
 canvas = []
 fig, axes = plt.subplots(2, 2, sharex=True, num="states")
@@ -73,7 +73,7 @@ def plot_single(data_run, data_trained, name=None, **kwargs):
         ln, = ax.plot(time, u * ax.mod, **kwargs)
     ln.set_label(name)
 
-    epoch = data_trained["epoch"]
+    epoch = data_trained["i"]
 
     axes = canvas[2][1]
     axes[0, 0].plot(
@@ -101,8 +101,8 @@ def plot_single(data_run, data_trained, name=None, **kwargs):
 
 
 plot_single(
-    data_run["BaseEnv-COPDAC"],
-    data_trained["BaseEnv-COPDAC"],
+    data_run,
+    data_trained,
     name="COPDAC",
     color="r",
     linestyle="--",
@@ -127,6 +127,6 @@ for window in canvas:
     )
     fig.tight_layout()
     fig.subplots_adjust(top=0.93)
-    fig.savefig(os.path.join(IMG_DIR, fig.canvas.get_window_title() + ".pdf"))
+    # fig.savefig(os.path.join(IMG_DIR, fig.canvas.get_window_title() + ".pdf"))
 
 plt.show()
