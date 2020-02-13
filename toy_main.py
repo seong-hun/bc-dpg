@@ -378,6 +378,22 @@ def _plot(obj, testfile):
 
     xmin, xmax = real_x.min(), real_x.max()
     umin, umax = real_u.min(), real_u.max()
+
+    # Create contourf
+    X, U = np.meshgrid(np.linspace(xmin, xmax, 100),
+                       np.linspace(umin, umax, 100))
+
+    agent = gan.GAN(lr=1e-3, x_size=1, u_size=1, z_size=30)
+
+    weightfile = testfile.replace("tests", "gans").replace("h5", "pth")
+    agent.load(weightfile)
+    agent.eval()
+
+    Z = np.zeros_like(X)
+    for i, j in np.ndindex(X.shape):
+        xu = torch.tensor(np.hstack((X[i, j], U[i, j]))).float().unsqueeze(0)
+        Z[i, j] = np.array(agent.net_d(xu).detach(), dtype=np.float)
+
     canvas = []
 
     fig, axes = plt.subplots(1, 2, sharey=True, squeeze=False, num="real")
@@ -406,6 +422,7 @@ def _plot(obj, testfile):
     ax = axes[0, 1]
     ax.plot(fake_x, fake_u, '.', markersize=2,
             mew=0, mfc=(0, 0, 0, 1))
+    ax.contourf(X, U, Z, levels=np.linspace(0.001, 0.015, 50), cmap="RdGy")
     fig.tight_layout()
 
 
