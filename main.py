@@ -29,7 +29,7 @@ PARAMS = {
         "lrv": 1e-2,
         "lrtheta": 1e-2,
         "lrc": 2e-3,
-        "lrg": 4e-1,
+        "lrg": 8e-1,
         "w_init": 0.03,
         "v_init": 0.03,
         "theta_init": 0,
@@ -164,7 +164,7 @@ def train(sample, mode, **kwargs):
         print(f"Elapsed time: {time.time() - t0:5.2f} sec")
 
     if mode == "copdac" or mode == "all":
-        np.random.seed(4)
+        np.random.seed(1)
 
         env = envs.BaseEnv(initial_perturb=[0, 0, 0, 0.2])
 
@@ -267,14 +267,14 @@ def test(path, mode, **kwargs):
 
 
 @main.command()
-@click.option("--trained", "-w", default="data/copdac/BaseEnv-COPDAC-gan.h5")
+@click.argument("path", nargs=1, type=click.Path(exists=True))
 @click.option("--out", "-o", default="data/run.h5")
 @click.option("--with-plot", "-p", is_flag=True)
-def run(**kwargs):
+def run(path, **kwargs):
     logger = logging.Logger(
         log_dir=".", file_name=kwargs["out"], max_len=100)
-    data = logging.load(kwargs["trained"])
-    expname = os.path.basename(kwargs["trained"])
+    data = logging.load(path)
+    expname = os.path.basename(path)
     envname, agentname, *_ = expname.split("-")
     env = getattr(envs, envname)(
         initial_perturb=[1, 0.0, 0, np.deg2rad(10)],
