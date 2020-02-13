@@ -93,7 +93,13 @@ class GAN():
         self.fake_u = self.net_g(zx)  # G(x)
 
     def get_action(self, x):
-        zx = torch.cat((torch.randn(len(x), self.z_size), x), 1)
+        if isinstance(x, torch.Tensor):
+            zx = torch.cat((torch.randn(len(x), self.z_size), x), 1)
+        else:
+            x = torch.tensor(x).float()
+            zx = torch.tensor(
+                np.hstack((np.random.randn(len(x), self.z_size), x))
+            ).float()
         return self.net_g(zx).detach().numpy()  # G(x)
 
     def train(self):

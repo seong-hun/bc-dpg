@@ -29,7 +29,7 @@ PARAMS = {
         "lrv": 1e-2,
         "lrtheta": 1e-2,
         "lrc": 2e-3,
-        "lrg": 8e-1,
+        "lrg": 1e-1,
         "w_init": 0.03,
         "v_init": 0.03,
         "theta_init": 0,
@@ -100,6 +100,7 @@ def _sample_prog(i, log_dir):
 @click.option("--all", "mode", flag_value="all", default=True)
 @click.option("--gan", "mode", flag_value="gan")
 @click.option("--copdac", "mode", flag_value="copdac")
+@click.option("--gan-type", default="g", type=click.Choice(["d", "g"]))
 @click.option("--gan-lr", default=PARAMS["GAN"]["lr"])
 @click.option("--use-cuda", is_flag=True)
 @click.option("--gan-dir", default="data/gan")
@@ -186,8 +187,11 @@ def train(sample, mode, **kwargs):
 
         expname = "-".join([type(n).__name__ for n in (env, agent)])
         if kwargs["with_gan"]:
-            expname += "-gan"
-            agent.set_gan(kwargs["with_gan"], PARAMS["COPDAC"]["lrg"])
+            expname += "-gan" + "_" + kwargs["gan_type"]
+            agent.set_gan(
+                kwargs["with_gan"], PARAMS["COPDAC"]["lrg"],
+                kwargs["gan_type"],
+            )
 
         if kwargs["with_reg"]:
             expname += "-reg"
@@ -201,7 +205,7 @@ def train(sample, mode, **kwargs):
             epoch_start, i = 0, 0
             logger = logging.Logger(path=histpath, max_len=100)
 
-        print(f"Training {agentname}...")
+        print(f"Training {expname}...")
 
         epoch_end = epoch_start + kwargs["max_epoch"]
         for epoch in tqdm.trange(epoch_start, epoch_end):

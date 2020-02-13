@@ -91,6 +91,9 @@ class COPDAC(BaseAgent):
     def dpi_dtheta(self, x):
         return np.kron(np.eye(self.m), self.phi(x)).T
 
+    def get_Q(self, x, u, w, v, theta):
+        return w.dot(self.phi_w(x, u, theta)) + v.dot(self.phi_v(x))
+
     def load(self, path):
         data = logging.load(path)
         self.load_weights(data)
@@ -101,12 +104,13 @@ class COPDAC(BaseAgent):
         self.w = data["w"][-1]
         self.v = data["v"][-1]
 
-    def set_gan(self, path, lrg):
+    def set_gan(self, path, lrg, gan_type="g"):
         self.gan = gan.GAN(x_size=4, u_size=4, z_size=100)
         self.gan.load(path)
         self.gan.eval()
         self.lrg = lrg
         self.is_gan = True
+        self.gan_type = gan_type
 
     def set_reg(self, lrc):
         self.lrc = lrc
@@ -123,15 +127,9 @@ class COPDAC(BaseAgent):
         for x, bu, reward, nx in zip(*self.data):
             us = self.get_behavior(self.theta, nx)
             tderror = (
-                1 * (
-                    self.w.dot(self.phi_w(nx, us, self.theta))
-                    + self.v.dot(self.phi_v(nx))
-                )
+                1 * self.get_Q(nx, us, self.w, self.v, self.theta)
                 + reward
-                - (
-                    self.w.dot(self.phi_w(x, bu, self.theta))
-                    + self.v.dot(self.phi_v(x))
-                )
+                - self.get_Q(x, bu, self.w, self.v, self.theta)
             )
 
             grad_w += - tderror * self.phi_w(x, bu, self.theta)
@@ -142,37 +140,59 @@ class COPDAC(BaseAgent):
             delta += tderror
 
         n = len(self.data[0])
-        self.grad_w = - grad_w / n
-        self.grad_v = - grad_v / n
-        self.grad_theta = - grad_theta.reshape(self.theta.shape) / n
+        self.grad_w = grad_w / n
+        self.grad_v = grad_v / n
+        self.grad_theta = grad_theta.reshape(self.theta.shape) / n
         self.delta = delta / n
 
     def step(self):
         if np.abs(self.delta) > 0.001:
-            self.w = self.w + self.lrw * self.grad_w
-            self.v = self.v + self.lrv * self.grad_v
+            self.w = self.w - self.lrw * self.grad_w
+            self.v = self.v - self.lrv * self.grad_v
             add_grad = 0
             if self.is_gan:
-                add_grad += self.lrg * self.gan_grad()
+                add_grad += - self.lrg * self.gan_grad()
+                # print(np.abs(self.theta).max(), np.abs(add_grad).max())
             if self.is_reg:
                 add_grad += - self.lrc * self.theta
 
             self.theta = (
-                self.theta + self.lrtheta * self.grad_theta + add_grad
+                self.theta - self.lrtheta * self.grad_theta + add_grad
             )
 
     def gan_grad(self):
         x = self.data[0]
-        u = np.vstack([self.get_behavior(self.theta, xi) for xi in x])
-        xu = torch.tensor(np.hstack((x, u))).float()
-        xu.requires_grad = True
-        self.loss_d = self.gan.criterion(self.gan.net_d(xu).mean(), True)
-        self.loss_d.backward()
-        grad_du = np.array(xu.grad[:, 4:], dtype=np.float)  # dD / du
-        grad = 0
-        for xi, grad_dui in zip(x, grad_du):
-            dpdt = self.dpi_dtheta(xi)  # du / dtheta
-            grad += - dpdt.dot(grad_dui)
+
+        if self.gan_type == "d":
+            u = np.vstack([self.get_behavior(self.theta, xi) for xi in x])
+            xu = torch.tensor(np.hstack((x, u))).float()
+            xu.requires_grad = True
+            self.gan_loss = self.gan.criterion(self.gan.net_d(xu).mean(), True)
+            self.gan_loss.backward()
+            grad_du = np.array(xu.grad[:, 4:], dtype=np.float)  # dD / du
+            grad = 0
+            for xi, grad_dui in zip(x, grad_du):
+                dpdt = self.dpi_dtheta(xi)  # du / dtheta
+                grad += - dpdt.dot(grad_dui)
+
+        elif self.gan_type == "g":
+            u_cand = np.array([
+                self.gan.get_action(x) for _ in range(25)
+            ]).transpose(1, 0, 2)
+            grad = 0
+            loss = 0
+            for xi, ui_cand in zip(x, u_cand):
+                Q_cand = np.array([
+                    self.get_Q(xi, ui, self.w, self.v, self.theta)
+                    for ui in ui_cand])
+                us = ui_cand[Q_cand.argmin()]
+                dpdt = self.dpi_dtheta(xi)
+                e = dpdt.T.dot(self.theta.ravel()) - us
+                loss += np.sum(e ** 2) / 2
+                grad += dpdt.dot(e)
+
+            self.gan_loss = loss / len(x)
+
         grad = grad.reshape(self.theta.shape) / len(x)
         return grad
 
@@ -181,7 +201,13 @@ class COPDAC(BaseAgent):
         self.step()
 
     def get_losses(self):
-        return {"gan": self.loss_d.detach().numpy(), "delta": self.delta}
+        loss = {"delta": self.delta}
+        if self.is_gan:
+            if self.gan_type == "d":
+                loss.update(gan=self.gan_loss.detach().numpy())
+            elif self.gan_type == "g":
+                loss.update(gan=self.gan_loss)
+        return loss
 
 
 class RegCOPDAC(COPDAC):

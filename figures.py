@@ -117,11 +117,12 @@ def train_plot(savepath, **kwargs):
         data["loss"]["delta"].reshape(-1, data["loss"]["delta"][0].size),
         **kwargs
     )
-    axes[0, 1].plot(
-        epoch,
-        data["loss"]["gan"].reshape(-1, data["loss"]["gan"][0].size),
-        **kwargs
-    )
+    if "gan" in data["loss"].keys():
+        axes[0, 1].plot(
+            epoch,
+            data["loss"]["gan"].reshape(-1, data["loss"]["gan"][0].size),
+            **kwargs
+        )
     axes[1, 0].plot(
         epoch,
         data["w"].reshape(-1, data["w"][0].size),
