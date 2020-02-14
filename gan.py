@@ -60,22 +60,25 @@ class Generator(nn.Module):
 
 class GAN():
     def __init__(self, x_size, u_size, z_size, lr=2e-4,
-                 use_cuda=False, lambda_l1=0.01):
+                 use_cuda=True, lambda_l1=0.01):
         self.z_size = z_size
         self.lambda_l1 = lambda_l1
         self.net_d = Discriminator(x_size=x_size, u_size=u_size)
         self.net_g = Generator(x_size=x_size, u_size=u_size, z_size=z_size)
+        self.net_c = Generator(x_size=x_size, u_size=u_size, z_size=z_size)
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() and use_cuda else "cpu")
 
         self.initialize(self.net_d)
         self.initialize(self.net_g)
+        self.initialize(self.net_c)
 
         self.criterion = LossWrapper(nn.MSELoss()).to(self.device)
         self.criterion_l1 = nn.L1Loss()
 
         self.optimizer_d = torch.optim.Adam(self.net_d.parameters(), lr=lr)
         self.optimizer_g = torch.optim.Adam(self.net_g.parameters(), lr=lr)
+        self.optimizer_c = torch.optim.Adam(self.net_c.parameters(), lr=lr)
 
     def initialize(self, net):
         net.to(self.device)
@@ -91,8 +94,9 @@ class GAN():
         z = torch.randn(len(x), self.z_size).to(self.device)
         zx = torch.cat((z, x), 1)
         self.fake_u = self.net_g(zx)  # G(x)
+        self.fake_u_c = self.net_c(zx)
 
-    def get_action(self, x):
+    def get_action(self, x, net_name="net_g", to="numpy"):
         if isinstance(x, torch.Tensor):
             zx = torch.cat((torch.randn(len(x), self.z_size), x), 1)
         else:
@@ -100,7 +104,16 @@ class GAN():
             zx = torch.tensor(
                 np.hstack((np.random.randn(len(x), self.z_size), x))
             ).float()
-        return self.net_g(zx).detach().numpy()  # G(x)
+
+        if net_name == "net_g":
+            net = self.net_g
+        elif net_name == "net_c":
+            net = self.net_c
+
+        if to == "numpy":
+            return net(zx).detach().numpy()  # G(x)
+        elif to == "torch":
+            return net(zx).detach()  # G(x)
 
     def train(self):
         self.forward(self.real_x)  # Compute fake control input
@@ -118,7 +131,16 @@ class GAN():
         pred_real = self.net_d(real_xu.detach())
         self.loss_d_real = self.criterion(pred_real, True)
 
-        self.loss_d = (self.loss_d_fake + self.loss_d_real) * 0.5
+        # Fake by cooperator
+        fake_xu_c = torch.cat((self.real_x, self.fake_u_c), 1)
+        pred_fake_c = self.net_d(fake_xu_c.detach())
+        self.loss_d_coop = self.criterion(pred_fake_c, False)
+
+        self.loss_d = (
+            self.loss_d_fake
+            + self.loss_d_real
+            + self.loss_d_coop * 0.5
+        ) / 3
         self.loss_d.backward()
 
         self.optimizer_d.step()
@@ -133,21 +155,34 @@ class GAN():
 
         self.optimizer_g.step()
 
+        # Train Cooperator
+        self.optimizer_c.zero_grad()
+        pred_fake_c = self.net_d(fake_xu_c)
+        self.loss_c = self.criterion(pred_fake_c, False)
+        self.loss_c += (
+            self.criterion_l1(self.fake_u_c, self.real_u) * self.lambda_l1)
+        self.loss_c.backward()
+
+        self.optimizer_c.step()
+
     def share_memory(self):
         self.net_d.share_memory()
         self.net_g.share_memory()
+        self.net_c.share_memory()
 
     def save(self, epoch, savepath):
         torch.save({
             "epoch": epoch,
             "net_d": self.net_d.state_dict(),
             "net_g": self.net_g.state_dict(),
+            "net_c": self.net_c.state_dict(),
         }, savepath)
 
     def load(self, loadpath):
         data = torch.load(loadpath, map_location=self.device)
         self.net_d.load_state_dict(data["net_d"])
         self.net_g.load_state_dict(data["net_g"])
+        self.net_c.load_state_dict(data["net_c"])
         return data["epoch"]
 
     def eval(self):

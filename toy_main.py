@@ -189,8 +189,6 @@ def train(obj, samples, **kwargs):
             shutil.rmtree(gandir)
         os.makedirs(gandir, exist_ok=True)
 
-        print(f"Train GAN for sample ({sample}) ...")
-
         save_interval = int(kwargs["save_interval"])
 
         agent = gan.GAN(
@@ -214,12 +212,15 @@ def train(obj, samples, **kwargs):
             logger = logging.Logger(
                 path=histpath, max_len=kwargs["save_interval"])
 
+        print(f"Train GAN for sample ({sample}) using {agent.device.type}")
+
         t0 = time.time()
         for epoch in tqdm.trange(epoch_start,
                                  epoch_start + 1 + kwargs["max_epoch"]):
-            loss_d, loss_g = prog(epoch)
+            loss_d, loss_g, loss_c = prog(epoch)
 
-            logger.record(epoch=epoch, loss_d=loss_d, loss_g=loss_g)
+            logger.record(
+                epoch=epoch, loss_d=loss_d, loss_g=loss_g, loss_c=loss_c)
 
             if (epoch % save_interval == 0
                     or epoch == epoch_start + 1 + kwargs["max_epoch"]):
@@ -242,6 +243,7 @@ def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
 
     loss_d = 0
     loss_g = 0
+    loss_c = 0
     for i, (x, u, mask) in enumerate(dataloader, start=1):
         x = x[mask.bool().squeeze()]
         u = u[mask.bool().squeeze()]
@@ -249,8 +251,9 @@ def _gan_prog(epoch, agent, files, shuffle=True, batch_size=32):
         agent.train()
         loss_d += float(agent.loss_d.mean())
         loss_g += float(agent.loss_g.mean())
+        loss_c += float(agent.loss_c.mean())
 
-    return loss_d / i, loss_g / i
+    return loss_d / i, loss_g / i, loss_c / i
 
 
 @main.command()
@@ -289,11 +292,12 @@ def test(obj, **kwargs):
         fake_u = np.zeros_like(real_u)
         for i in range(fake_x.size):
             fake_x[i] = data_gen()[0]
-        fake_u = agent.get_action(fake_x)
+        fake_u = agent.get_action(fake_x, net_name="net_g")
+        fake_u_c = agent.get_action(fake_x, net_name="net_c")
 
         logging.save(testpath, dict(
             real_x=real_x, real_u=real_u, mask=mask,
-            fake_x=fake_x, fake_u=fake_u))
+            fake_x=fake_x, fake_u=fake_u, fake_u_c=fake_u_c))
         tqdm.tqdm.write(f"Test data is saved in {testpath}.")
 
         _plot(obj, testpath)
@@ -372,9 +376,9 @@ def _plot_sample(testfile):
 def _plot(obj, testfile):
     data = logging.load(testfile)
 
-    real_x, real_u, mask, fake_x, fake_u = (
+    real_x, real_u, mask, fake_x, fake_u, fake_u_c = (
         data[k].ravel()
-        for k in ("real_x", "real_u", "mask", "fake_x", "fake_u"))
+        for k in ("real_x", "real_u", "mask", "fake_x", "fake_u", "fake_u_c"))
 
     xmin, xmax = real_x.min(), real_x.max()
     umin, umax = real_u.min(), real_u.max()
@@ -414,16 +418,23 @@ def _plot(obj, testfile):
     fig, axes = canvas[0]
     ax = axes[0, 0]
     mask = mask.astype(bool)
-    ax.plot(real_x[mask], real_u[mask], '.', markersize=2,
-            mew=0, mfc=(0, 0, 0, 1))
+    # ax.plot(real_x[mask], real_u[mask], '.', markersize=2,
+    #         mew=0, mfc=(0, 0, 0, 1))
     ax.plot(real_x[~mask], real_u[~mask], '.', markersize=2,
             mew=0, mfc=(1, 0, 0, 0.1))
+    ax.contourf(X, U, Z, levels=np.linspace(0, 0.05, 50), cmap="summer")
 
     ax = axes[0, 1]
+    ax.plot(fake_x, fake_u_c, '*', markersize=2,
+            mew=0, mfc=(1, 0, 0, 1))
     ax.plot(fake_x, fake_u, '.', markersize=2,
             mew=0, mfc=(0, 0, 0, 1))
-    ax.contourf(X, U, Z, levels=np.linspace(0.001, 0.015, 50), cmap="RdGy")
+    c = ax.contourf(X, U, Z, levels=np.linspace(0, 0.05, 50), cmap="summer")
+
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.2)
+    cax = fig.add_axes([0.15, 0.08, 0.7, 0.05])
+    fig.colorbar(c, cax=cax, orientation="horizontal")
 
 
 def _plot_hist(histfile):
