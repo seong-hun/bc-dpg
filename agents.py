@@ -10,6 +10,7 @@ import fym.logging as logging
 
 import utils
 import gan
+import net
 
 
 class BaseAgent:
@@ -46,7 +47,7 @@ class BaseAgent:
         the structure of ``phi`` which has no constant term. Also,
         the behavior policy should always be saturated by the control limits
         defined by the system."""
-        del_ub = theta.T.dot(self.phi(x))
+        del_ub = self.phi(x).dot(theta)
         return self.saturation(self.trim_u + del_ub) - self.trim_u
 
 
@@ -73,6 +74,8 @@ class COPDAC(BaseAgent):
         self.is_gan = False
         self.is_reg = False
 
+        self.QNet = net.QNet(self.trim_x.size, self.trim_u.size)
+
     def get_action(self, obs, noise_scale=0):
         time = self.clock.get()
         theta = self.theta + noise_scale * np.exp(-time/2) * np.random.randn()
@@ -84,9 +87,6 @@ class COPDAC(BaseAgent):
 
     def phi_w(self, x, u, theta):
         return self.dpi_dtheta(x).dot(u - np.dot(self.phi(x), theta))
-
-    def phi_q(self, x, u, theta):
-        return np.hstack((self.phi_c(x, u, theta), self.phi_v(x)))
 
     def dpi_dtheta(self, x):
         return np.kron(np.eye(self.m), self.phi(x)).T
@@ -117,6 +117,7 @@ class COPDAC(BaseAgent):
         self.is_reg = True
 
     def set_input(self, data):
+        self.torch_data = data
         self.data = [np.array(d, dtype=np.float) for d in data]
 
     def backward(self):
@@ -142,8 +143,17 @@ class COPDAC(BaseAgent):
         n = len(self.data[0])
         self.grad_w = grad_w / n
         self.grad_v = grad_v / n
-        self.grad_theta = grad_theta.reshape(self.theta.shape) / n
+        self.grad_theta = grad_theta.reshape(self.theta.shape, order="F") / n
         self.delta = delta / n
+
+        # Train dual Q-network
+        self.QNet.zero_grad()
+        x, bu, reward, nx = self.torch_data
+        us = torch.tensor(self.get_behavior(self.theta, nx)).float()
+        current_Q = self.QNet(x, bu)
+        target_Q = self.QNet(nx, us) + reward
+        self.dual_q_loss = self.QNet.criterion(target_Q, current_Q)
+        self.dual_q_loss.backward()
 
     def step(self):
         if np.abs(self.delta) > 0.001:
@@ -160,10 +170,11 @@ class COPDAC(BaseAgent):
                 self.theta - self.lrtheta * self.grad_theta + add_grad
             )
 
-    def gan_grad(self):
-        x = self.data[0]
+        self.QNet.optimizer.step()
 
+    def gan_grad(self):
         if self.gan_type == "d":
+            x = self.data[0]
             u = np.vstack([self.get_behavior(self.theta, xi) for xi in x])
             xu = torch.tensor(np.hstack((x, u))).float()
             xu.requires_grad = True
@@ -176,24 +187,25 @@ class COPDAC(BaseAgent):
                 grad += - dpdt.dot(grad_dui)
 
         elif self.gan_type == "g":
-            u_cand = np.array([
-                self.gan.get_action(x) for _ in range(25)
-            ]).transpose(1, 0, 2)
+            x = self.torch_data[0]
+            u_cand = torch.stack([
+                self.gan.get_action(x, to="torch") for _ in range(25)
+            ])
+            Q_cand = torch.cat([self.QNet(x, u) for u in u_cand], 1)
+            us = u_cand.gather(
+                0, Q_cand.argmin(1).view(1, -1, 1).repeat(1, 1, 4))[0]
+            # u = self.get_behavior(self.theta.T, x)
             grad = 0
             loss = 0
-            for xi, ui_cand in zip(x, u_cand):
-                Q_cand = np.array([
-                    self.get_Q(xi, ui, self.w, self.v, self.theta)
-                    for ui in ui_cand])
-                us = ui_cand[Q_cand.argmin()]
+            for xi, ui in zip(x, us):
                 dpdt = self.dpi_dtheta(xi)
-                e = dpdt.T.dot(self.theta.ravel()) - us
+                e = dpdt.T.dot(self.theta.T.ravel()) - ui.numpy()
                 loss += np.sum(e ** 2) / 2
                 grad += dpdt.dot(e)
 
             self.gan_loss = loss / len(x)
 
-        grad = grad.reshape(self.theta.shape) / len(x)
+        grad = grad.reshape(self.theta.shape, order="F") / len(x)
         return grad
 
     def train(self):

@@ -139,7 +139,7 @@ class GAN():
         self.loss_d = (
             self.loss_d_fake
             + self.loss_d_real
-            + self.loss_d_coop * 0.5
+            + self.loss_d_coop
         ) / 3
         self.loss_d.backward()
 

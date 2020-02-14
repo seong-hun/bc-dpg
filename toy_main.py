@@ -418,18 +418,18 @@ def _plot(obj, testfile):
     fig, axes = canvas[0]
     ax = axes[0, 0]
     mask = mask.astype(bool)
-    # ax.plot(real_x[mask], real_u[mask], '.', markersize=2,
-    #         mew=0, mfc=(0, 0, 0, 1))
+    ax.plot(real_x[mask], real_u[mask], '.', markersize=2,
+            mew=0, mfc=(0, 0, 0, 0.4))
     ax.plot(real_x[~mask], real_u[~mask], '.', markersize=2,
             mew=0, mfc=(1, 0, 0, 0.1))
-    ax.contourf(X, U, Z, levels=np.linspace(0, 0.05, 50), cmap="summer")
+    ax.contourf(X, U, Z, levels=np.linspace(0, 0.25, 50), cmap="summer")
 
     ax = axes[0, 1]
     ax.plot(fake_x, fake_u_c, '*', markersize=2,
             mew=0, mfc=(1, 0, 0, 1))
     ax.plot(fake_x, fake_u, '.', markersize=2,
             mew=0, mfc=(0, 0, 0, 1))
-    c = ax.contourf(X, U, Z, levels=np.linspace(0, 0.05, 50), cmap="summer")
+    c = ax.contourf(X, U, Z, levels=np.linspace(0, 0.25, 50), cmap="summer")
 
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.2)
