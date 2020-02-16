@@ -44,6 +44,13 @@ $ python main.py plot --gan data/tmp.h5
 
 COPDAC Training can be done with two options, with and without GAN.
 
+**Vanila**
+
+1. Train COPDAC without GAN for the sample `data/sample.h5`.
+```bash
+$ python main.py train --copdac -n 5 data/samples
+```
+
 **With GAN and Regulator**
 
 1. Train COPDAC with a GAN target selector and a regulator.
@@ -59,13 +66,6 @@ $ python main.py plot --copdac data/copdac/BaseEnv-COPDAC-gan-reg.h5
 3. Test and plot the learnt control input.
 ```bash
 $ python main.py run -p data/copdac/BaseEnv-COPDAC-gan-reg.h5
-```
-
-**Without GAN**
-
-1. Train COPDAC without GAN for the sample `data/sample.h5`.
-```bash
-$ python main.py train --copdac data/samples
 ```
 
 ## TODO
