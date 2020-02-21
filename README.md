@@ -51,6 +51,9 @@ COPDAC Training can be done with two options, with and without GAN.
 $ python main.py train --copdac -n 5 data/samples
 ```
 
+**With a theta bound**
+%TODO
+
 **With GAN and Regulator**
 
 1. Train COPDAC with a GAN target selector and a regulator.

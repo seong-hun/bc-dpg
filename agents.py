@@ -15,16 +15,23 @@ import net
 
 
 class BaseAgent:
+    """Generate trajectories of behavior policy"""
     def __init__(self, env, theta_init):
+        self.name = "BaseAgent"
+
         self.clock = env.clock
-        self.saturation = env.system.saturation
+        self.limits = np.vstack([
+            env.system.control_limits[k]
+            for k in ("delt", "dele", "eta1", "eta2")
+        ]).T
+        self.get_behavior = env.get_behavior
+        self.phi = env.phi
+
         self.trim_x = env.trim_x
         self.trim_u = env.trim_u
         self.m = self.trim_u.size
 
-        self.poly_theta = PolynomialFeatures(degree=1, include_bias=False)
-
-        self.n_phi = self.phi(self.trim_x).size
+        self.n_phi = self.phi(self.trim_x).shape[1]
         self.theta = theta_init * np.random.randn(self.n_phi, self.m)
         self.noise = False
 
@@ -33,7 +40,7 @@ class BaseAgent:
 
     def get_action(self, obs):
         if not self.noise:
-            return self.get_behavior(self.theta, obs)
+            return self.theta
         else:
             time = self.clock.get()
             theta = self.theta + (
@@ -41,41 +48,36 @@ class BaseAgent:
                 * np.exp(-time/self.noise["tau"])
                 * np.random.randn()
             )
-            return self.get_behavior(theta, obs)
-
-    def phi(self, x):
-        poly = self.poly_theta.fit_transform(np.atleast_2d(x))
-        if np.ndim(x) == 1:
-            return poly[0]
-        else:
-            return poly
-
-    def get_behavior(self, theta, x):
-        """If ``x = self.trim_x``, then ``del_u = 0``. This is ensured by
-        the structure of ``phi`` which has no constant term. Also,
-        the behavior policy should always be saturated by the control limits
-        defined by the system."""
-        del_ub = self.phi(x).dot(theta)
-        return self.saturation(self.trim_u + del_ub) - self.trim_u
+            return theta
 
 
 class COPDAC(BaseAgent):
     "Compatible off-policy deterministic actor-critc"
     def __init__(self, env, lrw, lrv, lrtheta, w_init, v_init, theta_init,
-                 maxlen, batch_size):
+                 v_deg, maxlen, batch_size):
         super().__init__(env, theta_init)
+        self.name = "COPDAC"
+
+        # Learning rates
         self.lrw = lrw
         self.lrv = lrv
         self.lrtheta = lrtheta
+
         self.batch_size = batch_size
 
-        self.poly_v = PolynomialFeatures(degree=2, include_bias=False)
-
+        # Initialize COPDAC parameters
+        self.poly_v = PolynomialFeatures(degree=v_deg, include_bias=False)
         self.w = w_init * np.random.randn(
-            self.phi_w(self.trim_x, self.trim_u, self.theta).size)
+            self.phi_w(
+                np.atleast_2d(self.trim_x),
+                np.atleast_2d(self.trim_u),
+                self.theta
+            ).size)
         self.v = v_init * np.random.randn(self.phi_v(self.trim_x).size)
+        self.theta = theta_init * np.random.randn(self.n_phi, self.m)
 
-        self.flags = []
+        # Add-ons
+        self.addons = []
 
         self.QNet = net.QNet(self.trim_x.size, self.trim_u.size)
 
@@ -87,28 +89,19 @@ class COPDAC(BaseAgent):
             return poly
 
     def phi_w(self, x, u, theta):
-        y = u - self.phi(x).dot(theta)
-        y = np.expand_dims(y, -2)
-        # (batch, 1, m) * (batch, m * n_phi, m)
-        # (1, m) * (m * n_phi, m)
-        # -> (batch, m * n_phi) or (m * n_phi, )
+        # (batch, 1, m)
+        y = (u - self.get_behavior(theta, x))[:, None, :]  # (batch, 1, m)
+        # (batch, 1, m) * (batch, m * n_phi, m) -> (batch, m * n_phi)
         return np.sum(y * self.dpi_dtheta(x), axis=-1)
 
     def dpi_dtheta(self, x):
-        eye = np.eye(self.m)  # (m, m)
-        phi = np.expand_dims(self.phi(x), -1)  # (b, n_phi) or (n_phi, 1)
-
-        if np.ndim(x) == 2:
-            eye = np.expand_dims(eye, 0)  # (1, m, m) or (m, m)
-
-        return np.kron(eye, phi)  # (batch, m * n_phi, m) or (m * n_phi, m)
+        eye = np.eye(self.m)[None, :, :]  # (1, m, m)
+        phi = self.phi(x)[:, :, None]  # (batch, n_phi, 1)
+        return np.kron(eye, phi)  # (batch, m * n_phi, m)
 
     def get_Q(self, x, u, w, v, theta):
         Q = self.phi_w(x, u, theta).dot(w) + self.phi_v(x).dot(v)
-        if np.ndim(x) == 2:
-            return Q.reshape(-1, 1)
-        else:
-            return Q
+        return Q.reshape(-1, 1)
 
     def set_input(self, data):
         self.torch_data = data
@@ -139,7 +132,7 @@ class COPDAC(BaseAgent):
         self.delta = np.mean(tderror, axis=0)
 
         # Train dual Q-network
-        if "dual_Q" in self.flags:
+        if "dual_Q" in self.addons:
             self.QNet.zero_grad()
             x, bu, reward, nx = self.torch_data
             us = torch.tensor(self.get_behavior(self.theta, nx)).float()
@@ -155,15 +148,21 @@ class COPDAC(BaseAgent):
 
             add_grad = 0
 
-            if "gan" in self.flags:
+            if "gan" in self.addons:
                 add_grad += - self.lrg * self.gan_grad()
                 # print(np.abs(self.theta).max(), np.abs(add_grad).max())
-            if "reg" in self.flags:
+            if "reg" in self.addons:
                 add_grad += - self.lrc * self.theta
 
-            self.theta = self.theta - self.lrtheta * self.grad_theta + add_grad
+            new_theta = self.theta - self.lrtheta * self.grad_theta + add_grad
 
-            if "dual_Q" in self.flags:
+            if "const" in self.addons:
+                if not self.in_bound(new_theta):
+                    new_theta = self.theta
+
+            self.theta = new_theta
+
+            if "dual_Q" in self.addons:
                 self.QNet.optimizer.step()
 
     def load(self, path):
@@ -176,20 +175,38 @@ class COPDAC(BaseAgent):
         self.w = data["w"][-1]
         self.v = data["v"][-1]
 
+    def in_bound(self, theta):
+        x = self.data[0]
+        u = self.phi(x).dot(theta) + self.trim_u
+
+        in_rate = np.logical_and(
+            self.limits[0] <= u,
+            u <= self.limits[1]
+        ).all(1).mean()
+
+        if in_rate == 1:
+            return True
+        else:
+            return False
+
+    def get_name(self):
+        return "-".join((self.name, *sorted(self.addons)))
+
     def set_gan(self, path, lrg, gan_type="g"):
+        self.addons.append("gan" + "_" + gan_type)
+
         self.gan = gan.GAN(x_size=4, u_size=4, z_size=100)
         self.gan.load(path)
         self.gan.eval()
         self.lrg = lrg
-        self.flags.append("gan")
         self.gan_type = gan_type
 
     def set_reg(self, lrc):
+        self.addons.append("reg")
         self.lrc = lrc
-        self.flags.append("reg")
 
     def set_const(self):
-        self.flags.append("const")
+        self.addons.append("const")
 
     def gan_grad(self):
         if self.gan_type == "d":
@@ -229,7 +246,7 @@ class COPDAC(BaseAgent):
 
     def get_losses(self):
         loss = {"delta": self.delta}
-        if "gan" in self.flags:
+        if "gan" in self.addons:
             if self.gan_type == "d":
                 loss.update(gan=self.gan_loss.detach().numpy())
             elif self.gan_type == "g":

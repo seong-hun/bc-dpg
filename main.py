@@ -18,6 +18,13 @@ import gan
 import utils
 
 PARAMS = {
+    "BaseEnv": {
+        "phi_deg": 1,
+        "dt": 0.01,
+        "max_t": 20,
+        "solver": "rk4",
+        "ode_step_len": 1,
+    },
     "GAN": {
         "x_size": 4,
         "u_size": 4,
@@ -27,14 +34,23 @@ PARAMS = {
     "COPDAC": {
         "lrw": 1e-2,
         "lrv": 1e-2,
-        "lrtheta": 1e-2,
-        "lrc": 2e-3,
-        "lrg": 1e-1,
+        "lrtheta": 1e-3,
         "w_init": 0.03,
         "v_init": 0.03,
         "theta_init": 0,
+        "v_deg": 2,
         "maxlen": 100,
         "batch_size": 64,
+    },
+    "addons": {
+        "reg": {
+            "lrc": 2e-3,
+        },
+        "GAN": {
+            "lrg": 1e-1,
+        },
+        "const": {
+        },
     },
 }
 
@@ -69,11 +85,7 @@ def sample(**kwargs):
 
 def _sample_prog(i, log_dir):
     np.random.seed(i)
-    env = envs.BaseEnv(
-        initial_perturb=[0, 0, 0, 0.1],
-        dt=0.01, max_t=20,
-        solver="rk4", ode_step_len=1,
-    )
+    env = envs.BaseEnv(initial_perturb=[0, 0, 0, 0.1], **PARAMS["BaseEnv"])
     agent = agents.BaseAgent(env, theta_init=0)
     agent.add_noise(scale=0.03, tau=2)
     file_name = f"{i:03d}.h5"
@@ -169,47 +181,40 @@ def train(sample, mode, **kwargs):
     if mode == "copdac" or mode == "all":
         np.random.seed(kwargs["seed"])
 
-        env = envs.BaseEnv(initial_perturb=[0, 0, 0, 0.2])
+        env = envs.BaseEnv(**PARAMS["BaseEnv"])
+        agent = agents.COPDAC(env, **PARAMS["COPDAC"])
 
-        copdacdir = kwargs["copdac_dir"]
-
-        agentname = "COPDAC"
-        Agent = getattr(agents, agentname)
-        agent = Agent(
-            env,
-            lrw=PARAMS["COPDAC"]["lrw"],
-            lrv=PARAMS["COPDAC"]["lrv"],
-            lrtheta=PARAMS["COPDAC"]["lrtheta"],
-            w_init=PARAMS["COPDAC"]["w_init"],
-            v_init=PARAMS["COPDAC"]["v_init"],
-            theta_init=PARAMS["COPDAC"]["lrv"],
-            maxlen=PARAMS["COPDAC"]["maxlen"],
-            batch_size=PARAMS["COPDAC"]["batch_size"],
-        )
-
-        expname = "-".join([type(n).__name__ for n in (env, agent)])
+        # Add-ons
         if kwargs["with_gan"]:
-            expname += "-gan" + "_" + kwargs["gan_type"]
             agent.set_gan(
-                kwargs["with_gan"], PARAMS["COPDAC"]["lrg"],
-                kwargs["gan_type"],
+                kwargs["with_gan"],
+                **PARAMS["addons"]["GAN"],
+                gan_type=kwargs["gan_type"],
             )
 
         if kwargs["with_reg"]:
-            expname += "-reg"
-            agent.set_reg(PARAMS["COPDAC"]["lrc"])
+            agent.set_reg(**PARAMS["addons"]["reg"])
 
         if kwargs["with_const"]:
-            expname += "-const"
-            agent.set_const()
+            agent.set_const(**PARAMS["addons"]["const"])
 
+        copdacdir = kwargs["copdac_dir"]
+        expname = "-".join((env.name, agent.get_name()))
         histpath = os.path.join(copdacdir, expname + ".h5")
+
         if kwargs["continue"] is not None:
             epoch_start, i = agent.load(kwargs["continue"])
             logger = logging.Logger(path=histpath, max_len=100, mode="r+")
         else:
             epoch_start, i = 0, 0
             logger = logging.Logger(path=histpath, max_len=100)
+
+        logger.set_info(
+            env=env.__class__.__name__,
+            agent=agent.__class__.__name__,
+            PARAMS=PARAMS,
+            click=kwargs,
+        )
 
         print(f"Training {expname}...")
 
@@ -281,24 +286,20 @@ def test(path, mode, **kwargs):
 @click.option("--out", "-o", default="data/run.h5")
 @click.option("--with-plot", "-p", is_flag=True)
 def run(path, **kwargs):
-    logger = logging.Logger(
-        log_dir=".", file_name=kwargs["out"], max_len=100)
-    data = logging.load(path)
-    expname = os.path.splitext(os.path.basename(path))[0]
-    envname, agentname, *_ = expname.split("-")
-    env = getattr(envs, envname)(
-        initial_perturb=[1, 0.0, 0, np.deg2rad(10)],
-        dt=0.01, max_t=40, solver="rk4",
-        ode_step_len=1
-    )
-    agent = getattr(agents, agentname)(
-        env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
-        w_init=0.03, v_init=0.03, theta_init=0,
-        maxlen=100, batch_size=16
-    )
+    data, info = logging.load(path, with_info=True)
+
+    env = getattr(envs, info["env"])(
+        initial_perturb=[0, 0.0, 0, np.deg2rad(10)],
+        **info["PARAMS"]["BaseEnv"])
+    agent = getattr(agents, info["agent"])(env, **info["PARAMS"]["COPDAC"])
     agent.load_weights(data)
 
+    expname = os.path.splitext(os.path.basename(path))[0]
+
     print(f"Runnning {expname} ...")
+
+    logger = logging.Logger(path=kwargs["out"], max_len=100)
+
     _run(env, agent, logger, expname, **kwargs)
 
     logger.close()
@@ -366,5 +367,18 @@ def plot(path, mode, **kwargs):
 
 
 if __name__ == "__main__":
-    main()
-    # plot("data/tmp.h5")
+    env = envs.BaseEnv(**PARAMS["BaseEnv"])
+    agent = agents.COPDAC(env, **PARAMS["COPDAC"])
+
+    samplefiles = utils.parse_file("data/samples", ext="h5")
+    dataloader = gan.get_dataloader(
+        samplefiles, keys=("state", "action", "next_action"),
+        shuffle=True, batch_size=64)
+
+    import matplotlib.pyplot as plt
+
+    for x, u, nu in tqdm.tqdm(dataloader):
+        plt.plot(x, (u - nu).numpy() / env.trim_u,
+                 ".", ms=2, mew=0, mfc=(0, 0, 0, 1))
+
+    plt.show()
