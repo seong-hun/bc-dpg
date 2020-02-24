@@ -16,8 +16,26 @@ import envs
 import agents
 import gan
 import utils
+import common
 
 PARAMS = {
+    "sample": {
+        "OuNoise": {
+            "mean": 0,
+            "sigma": 0.01,
+            "dt": 1,
+            "max_t": 100,
+            "decay": 30
+        },
+        "FixedParamEnv": {
+            "initial_perturb": [0, 0, 0, 0.1],
+            "max_t": 100,
+            "solver": "odeint",
+            "dt": 40,
+            "ode_step_len": 1000,
+            "logging_off": False
+        },
+    },
     "BaseEnv": {
         "phi_deg": 1,
         "dt": 0.01,
@@ -85,26 +103,30 @@ def sample(**kwargs):
 
 def _sample_prog(i, log_dir):
     np.random.seed(i)
-    env = envs.BaseEnv(initial_perturb=[0, 0, 0, 0.1], **PARAMS["BaseEnv"])
-    agent = agents.BaseAgent(env, theta_init=0)
-    agent.add_noise(scale=0.03, tau=2)
-    file_name = f"{i:03d}.h5"
 
-    logger = logging.Logger(
-        log_dir=log_dir, file_name=file_name, max_len=100)
+    env = envs.FixedParamEnv(
+        **PARAMS["sample"]["FixedParamEnv"],
+        logging_path=os.path.join(log_dir, f"{i:03d}.h5")
+    )
+    behavior = agents.Linear(xdim=4, udim=4)
+    behavior.set_param(0)
+    ou_noise = common.OuNoise(**PARAMS["sample"]["OuNoise"])
+    behavior.add_noise(ou_noise)
+    env.set_inner_ctrl(behavior)
+    env.reset("random")
 
-    obs = env.reset("random")
     while True:
-        action = agent.get_action(obs)
-        next_obs, reward, done, info = env.step(action)
-        logger.record(**info)
-        obs = next_obs
+        _, _, done, _ = env.step()
 
         if done:
             break
 
+    env.logger.set_info(
+        initial_state=env.system.initial_state,
+        **PARAMS["sample"],
+    )
+
     env.close()
-    logger.close()
 
 
 @main.command()
@@ -181,7 +203,7 @@ def train(sample, mode, **kwargs):
     if mode == "copdac" or mode == "all":
         np.random.seed(kwargs["seed"])
 
-        env = envs.BaseEnv(**PARAMS["BaseEnv"])
+        env = envs.FixedParamEnv(**PARAMS["sample"]["FixedParamEnv"])
         agent = agents.COPDAC(env, **PARAMS["COPDAC"])
 
         # Add-ons
@@ -367,18 +389,19 @@ def plot(path, mode, **kwargs):
 
 
 if __name__ == "__main__":
-    env = envs.BaseEnv(**PARAMS["BaseEnv"])
-    agent = agents.COPDAC(env, **PARAMS["COPDAC"])
+    main()
+    # env = envs.BaseEnv(**PARAMS["BaseEnv"])
+    # agent = agents.COPDAC(env, **PARAMS["COPDAC"])
 
-    samplefiles = utils.parse_file("data/samples", ext="h5")
-    dataloader = gan.get_dataloader(
-        samplefiles, keys=("state", "action", "next_action"),
-        shuffle=True, batch_size=64)
+    # samplefiles = utils.parse_file("data/samples", ext="h5")
+    # dataloader = gan.get_dataloader(
+    #     samplefiles, keys=("state", "action", "next_action"),
+    #     shuffle=True, batch_size=64)
 
-    import matplotlib.pyplot as plt
+    # import matplotlib.pyplot as plt
 
-    for x, u, nu in tqdm.tqdm(dataloader):
-        plt.plot(x, (u - nu).numpy() / env.trim_u,
-                 ".", ms=2, mew=0, mfc=(0, 0, 0, 1))
+    # for x, u, nu in tqdm.tqdm(dataloader):
+    #     plt.plot(x, (u - nu).numpy() / env.trim_u,
+    #              ".", ms=2, mew=0, mfc=(0, 0, 0, 1))
 
-    plt.show()
+    # plt.show()

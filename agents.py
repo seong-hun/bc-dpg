@@ -14,6 +14,47 @@ import gan
 import net
 
 
+class BaseInnerCtrl:
+    def __init__(self, xdim, udim):
+        self.xtrim = np.zeros(xdim)
+        self.utrim = np.zeros(udim)
+
+    def set_trim(self, xtrim, utrim):
+        self.xtrim = xtrim
+        self.utrim = utrim
+
+    def get(self, t, x):
+        raise NotImplementedError
+
+
+class Linear(BaseInnerCtrl):
+    def __init__(self, xdim, udim):
+        super().__init__(xdim, udim)
+        self.theta = np.zeros((xdim, udim))
+        self.noise = None
+
+    def set_param(self, theta):
+        if np.ndim(theta) == 0:
+            theta = theta * np.ones_like(self.theta)
+
+        assert np.ndim(theta) == np.ndim(self.theta)
+
+        self.theta = theta
+
+    def get(self, t, x):
+        theta = self.theta + self.get_noise(t)
+        return (x - self.xtrim).dot(theta) + self.utrim
+
+    def get_noise(self, t):
+        if self.noise is not None:
+            return self.noise.get(t)
+        else:
+            return 0
+
+    def add_noise(self, noise):
+        self.noise = noise
+
+
 class BaseAgent:
     """Generate trajectories of behavior policy"""
     def __init__(self, env, theta_init):
@@ -252,6 +293,17 @@ class COPDAC(BaseAgent):
             elif self.gan_type == "g":
                 loss.update(gan=self.gan_loss)
         return loss
+
+    def phi(self, x_trimmed):
+        poly = self.poly_phi.fit_transform(np.atleast_2d(x_trimmed))
+        return poly
+
+    def get(self, theta, x_trimmed):
+        """output: trimmed and saturated u"""
+        assert np.ndim(x_trimmed) == 2, "dim(x) = (batch, size_x)"
+        u_trimmed = self.phi(x_trimmed).dot(theta)
+        # return self.saturation(self.trim_u + u_trimmed) - self.trim_u
+        return u_trimmed
 
 
 class RegCOPDAC(COPDAC):
