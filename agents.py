@@ -53,6 +53,7 @@ class Linear(BaseInnerCtrl):
 
     def add_noise(self, noise):
         self.noise = noise
+        self.noise.shape = self.theta.shape
 
 
 class BaseAgent:
@@ -92,13 +93,69 @@ class BaseAgent:
             return theta
 
 
-class COPDAC(BaseAgent):
+class COPDAC(nn.Module):
     "Compatible off-policy deterministic actor-critc"
-    def __init__(self, env, lrw, lrv, lrtheta, w_init, v_init, theta_init,
-                 v_deg, maxlen, batch_size):
-        super().__init__(env, theta_init)
+    def __init__(self, env, net_option, **kwargs):
+        super().__init__()
         self.name = "COPDAC"
 
+        self.net_q = self.set_net(net_option, "net_q")
+        self.net_pi = self.set_net(net_option, "net_pi")
+
+        self.addons = []
+
+    def set_net(self, option, name):
+        opt = option[name]
+        return getattr(net, opt["class"])(**opt["option"])
+
+    def set_input(self, data):
+        self.data = data
+        # self.data = [np.array(d, dtype=np.float) for d in data]
+
+    def train(self):
+        x, bu, reward, nx = self.data
+
+        self.net_q.zero_grad()
+        us = self.net_pi(nx)
+        with torch.no_grad():
+            target = self.net_q(nx, us) + reward
+        loss = self.net_q.criterion(self.net_q(x, bu), target)
+        loss.backward()
+        self.net_q.optimizer.step()
+        self.net_q.loss = loss.detach().numpy()
+
+        self.net_pi.zero_grad()
+        us = self.net_pi(x)
+        loss = self.net_q(x, us).mean()
+        loss.backward()
+        self.net_pi.optimizer.step()
+        self.net_pi.loss = loss.detach().numpy()
+
+    def get_msg(self):
+        return "\t".join([
+            f"{name} loss: {loss:5.4f}"
+            for name, loss in self.get_losses().items()
+        ])
+
+    def get_name(self):
+        return "-".join((self.name, *sorted(self.addons)))
+
+    def load(self, path):
+        data = logging.load(path)
+        self.load_weights(data)
+        mode = "r+"
+        return int(data["epoch"][-1] + 1), int(data["i"][-1] + 1), mode
+
+    def get_losses(self):
+        loss = {name: module.loss for name, module in self.named_children()}
+        if "gan" in self.addons:
+            if self.gan_type == "d":
+                loss.update(gan=self.gan_loss.detach().numpy())
+            elif self.gan_type == "g":
+                loss.update(gan=self.gan_loss)
+        return loss
+
+    def set(self):
         # Learning rates
         self.lrw = lrw
         self.lrv = lrv
@@ -144,44 +201,6 @@ class COPDAC(BaseAgent):
         Q = self.phi_w(x, u, theta).dot(w) + self.phi_v(x).dot(v)
         return Q.reshape(-1, 1)
 
-    def set_input(self, data):
-        self.torch_data = data
-        self.data = [np.array(d, dtype=np.float) for d in data]
-
-    def train(self):
-        self.backward()  # calculate gradients
-        self.step()  # update the parameters
-
-    def backward(self):
-        x, bu, reward, nx = self.data
-
-        us = self.get_behavior(self.theta, nx)
-        tderror = (
-            1 * self.get_Q(nx, us, self.w, self.v, self.theta)
-            + reward
-            - self.get_Q(x, bu, self.w, self.v, self.theta)
-        )
-        grad_w = - tderror * self.phi_w(x, bu, self.theta)
-        grad_v = - tderror * self.phi_v(x)
-        dpdt = self.dpi_dtheta(x)  # (b, m * n_phi, m) or (m * n_phi, m)
-        grad_theta = np.einsum("bij,bkj->bik", dpdt, dpdt).dot(self.w)
-
-        self.grad_w = np.mean(grad_w, axis=0)
-        self.grad_v = np.mean(grad_v, axis=0)
-        self.grad_theta = np.mean(grad_theta, axis=0).reshape(
-            self.theta.shape, order="F")
-        self.delta = np.mean(tderror, axis=0)
-
-        # Train dual Q-network
-        if "dual_Q" in self.addons:
-            self.QNet.zero_grad()
-            x, bu, reward, nx = self.torch_data
-            us = torch.tensor(self.get_behavior(self.theta, nx)).float()
-            current_Q = self.QNet(x, bu)
-            target_Q = self.QNet(nx, us) + reward
-            self.dual_q_loss = self.QNet.criterion(target_Q, current_Q)
-            self.dual_q_loss.backward()
-
     def step(self):
         if np.abs(self.delta) > 0.001:
             self.w = self.w - self.lrw * self.grad_w
@@ -206,11 +225,6 @@ class COPDAC(BaseAgent):
             if "dual_Q" in self.addons:
                 self.QNet.optimizer.step()
 
-    def load(self, path):
-        data = logging.load(path)
-        self.load_weights(data)
-        return int(data["epoch"][-1] + 1), int(data["i"][-1] + 1)
-
     def load_weights(self, data):
         self.theta = data["theta"][-1]
         self.w = data["w"][-1]
@@ -229,9 +243,6 @@ class COPDAC(BaseAgent):
             return True
         else:
             return False
-
-    def get_name(self):
-        return "-".join((self.name, *sorted(self.addons)))
 
     def set_gan(self, path, lrg, gan_type="g"):
         self.addons.append("gan" + "_" + gan_type)
@@ -285,15 +296,6 @@ class COPDAC(BaseAgent):
         grad = grad.reshape(self.theta.shape, order="F") / len(x)
         return grad
 
-    def get_losses(self):
-        loss = {"delta": self.delta}
-        if "gan" in self.addons:
-            if self.gan_type == "d":
-                loss.update(gan=self.gan_loss.detach().numpy())
-            elif self.gan_type == "g":
-                loss.update(gan=self.gan_loss)
-        return loss
-
     def phi(self, x_trimmed):
         poly = self.poly_phi.fit_transform(np.atleast_2d(x_trimmed))
         return poly
@@ -319,14 +321,12 @@ class RegCOPDAC(COPDAC):
 
 if __name__ == "__main__":
     import envs
+    import main
 
-    env = envs.BaseEnv(
-        initial_perturb=[1, 0.0, 0, np.deg2rad(10)],
-        dt=0.01, max_t=40, solver="rk4",
-        ode_step_len=1
-    )
+    PARAMS = main.PARAMS
+
+    env = envs.FixedParamEnv(
+        **{**PARAMS["sample"]["FixedParamEnv"], "logging_off": True})
     agent = COPDAC(
-        env, lrw=1e-2, lrv=1e-2, lrtheta=1e-2,
-        w_init=0.03, v_init=0.03, theta_init=0,
-        maxlen=100, batch_size=16
+        **PARAMS["train"]["COPDAC"]
     )

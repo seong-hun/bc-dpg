@@ -1,12 +1,7 @@
-from functools import partial
-
 import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
-
-import fym.logging as logging
 
 
 class Discriminator(nn.Module):
@@ -207,33 +202,3 @@ class LossWrapper(nn.Module):
         else:
             target_tensor = self.fake_label
         return target_tensor.expand_as(x)
-
-
-class DictDataset(Dataset):
-    def __init__(self, file_names, keys):
-        if isinstance(file_names, str):
-            file_names = (file_names, )
-
-        data_all = [logging.load(name) for name in file_names]
-        self.keys = keys if not isinstance(keys, str) else (keys, )
-
-        _data = {
-            k: torch.cat([
-                torch.tensor(data[k]).float()
-                for data in data_all
-            ])
-            for k in self.keys
-        }
-
-        self.data = _data
-        self.len = len(self.data[self.keys[0]])
-
-    def __getitem__(self, idx):
-        return [self.data[k][idx] for k in self.keys]
-
-    def __len__(self):
-        return self.len
-
-
-def get_dataloader(sample_files, keys=("state", "action"), **kwargs):
-    return DataLoader(DictDataset(sample_files, keys), **kwargs)

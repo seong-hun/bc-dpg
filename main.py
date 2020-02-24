@@ -1,6 +1,6 @@
 import click
 import numpy as np
-import tqdm
+from tqdm import tqdm, trange
 import os
 import glob
 import time
@@ -49,16 +49,38 @@ PARAMS = {
         "z_size": 100,
         "lr": 2e-4,
     },
-    "COPDAC": {
-        "lrw": 1e-2,
-        "lrv": 1e-2,
-        "lrtheta": 1e-3,
-        "w_init": 0.03,
-        "v_init": 0.03,
-        "theta_init": 0,
-        "v_deg": 2,
-        "maxlen": 100,
+    "train": {
         "batch_size": 64,
+        "max_epoch": 10,
+        "print_interval": 30,
+        "COPDAC": {
+            "net_option": {
+                "net_q": {
+                    "class": "QNet",
+                    "option": {
+                        "x_size": 4,
+                        "u_size": 4,
+                        "lr": 1e-3,
+                    },
+                },
+                "net_pi": {
+                    "class": "PolyNet",
+                    "option": {
+                        "x_size": 4,
+                        "u_size": 4,
+                        "lr": 1e-4,
+                        "degree": 1,
+                    },
+                },
+            },
+            "lrw": 1e-2,
+            "lrv": 1e-2,
+            "lrtheta": 1e-3,
+            "w_init": 0.03,
+            "v_init": 0.03,
+            "theta_init": 0,
+            "v_deg": 2,
+        },
     },
     "addons": {
         "reg": {
@@ -92,7 +114,7 @@ def sample(**kwargs):
 
     t0 = time.time()
     with ProcessPoolExecutor(max_workers) as p:
-        list(tqdm.tqdm(
+        list(tqdm(
             p.map(prog, range(kwargs["number"])),
             total=kwargs["number"]
         ))
@@ -110,7 +132,8 @@ def _sample_prog(i, log_dir):
     )
     behavior = agents.Linear(xdim=4, udim=4)
     behavior.set_param(0)
-    ou_noise = common.OuNoise(**PARAMS["sample"]["OuNoise"])
+    param = {**PARAMS["sample"]["OuNoise"], "mean": np.zeros((4, 4))}
+    ou_noise = common.OuNoise(**param)
     behavior.add_noise(ou_noise)
     env.set_inner_ctrl(behavior)
     env.reset("random")
@@ -178,13 +201,13 @@ def train(sample, mode, **kwargs):
                 path=histpath, max_len=kwargs["save_interval"])
 
         t0 = time.time()
-        for epoch in tqdm.trange(epoch_start,
-                                 epoch_start + 1 + kwargs["max_epoch"]):
+        for epoch in trange(epoch_start,
+                            epoch_start + 1 + kwargs["max_epoch"]):
             dataloader = gan.get_dataloader(
                 samplefiles, shuffle=True, batch_size=kwargs["batch_size"])
 
             loss_d = loss_g = 0
-            for i, data in enumerate(tqdm.tqdm(dataloader)):
+            for i, data in enumerate(tqdm(dataloader)):
                 agent.set_input(data)
                 agent.train()
                 loss_d += agent.loss_d.mean().detach().numpy()
@@ -196,15 +219,74 @@ def train(sample, mode, **kwargs):
                     or epoch == epoch_start + 1 + kwargs["max_epoch"]):
                 savepath = os.path.join(gandir, f"trained-{epoch:05d}.pth")
                 agent.save(epoch, savepath)
-                tqdm.tqdm.write(f"Weights are saved in {savepath}.")
+                tqdm.write(f"Weights are saved in {savepath}.")
 
         print(f"Elapsed time: {time.time() - t0:5.2f} sec")
 
     if mode == "copdac" or mode == "all":
         np.random.seed(kwargs["seed"])
 
-        env = envs.FixedParamEnv(**PARAMS["sample"]["FixedParamEnv"])
-        agent = agents.COPDAC(env, **PARAMS["COPDAC"])
+        envparams = {
+            **PARAMS["sample"]["FixedParamEnv"],
+            "logging_off": True
+        }
+        env = envs.FixedParamEnv(**envparams)
+        agent = agents.COPDAC(env, **PARAMS["train"]["COPDAC"])
+
+        expname = "-".join((env.name, agent.get_name()))
+        histpath = os.path.join(kwargs["copdac_dir"], expname + ".h5")
+
+        if kwargs["continue"] is not None:
+            epoch_init, global_step, mode = agent.load(kwargs["continue"])
+        else:
+            epoch_init, global_step, mode = 0, 0, "w"
+
+        logger = logging.Logger(path=histpath, max_len=100, mode=mode)
+        logger.set_info(
+            env=env.__class__.__name__,
+            agent=agent.__class__.__name__,
+            PARAMS=PARAMS,
+            click=kwargs,
+        )
+
+        print(f"Training {expname} ...")
+
+        def trimming(x, u, r, nx):
+            return x - env.trim_x, u - env.trim_u, r, nx - env.trim_x
+
+        dataloader = common.get_dataloader(
+            samplefiles,
+            keys=("state", "action", "reward", "next_state"),
+            shuffle=True,
+            batch_size=PARAMS["train"]["batch_size"],
+            transform=trimming
+        )
+
+        for epoch in trange(epoch_init, epoch_init + kwargs["max_epoch"]):
+            for n, data in enumerate(tqdm(
+                    dataloader, desc=f"Epoch {epoch}", leave=False)):
+                agent.set_input(data)
+                agent.train()
+
+                if global_step % PARAMS["train"]["print_interval"] == 0:
+                    msg = "\t".join([
+                        f"[Step_{global_step:07d}]",
+                        agent.get_msg()
+                    ])
+                    tqdm.write(msg)
+
+                if (global_step % kwargs["save_interval"] == 0
+                        or global_step == len(dataloader)):
+                    logger.record(
+                        epoch=epoch,
+                        global_step=global_step,
+                        state_dict=agent.state_dict(),
+                        loss=agent.get_losses()
+                    )
+                global_step += 1
+
+        logger.close()
+        return
 
         # Add-ons
         if kwargs["with_gan"]:
@@ -241,15 +323,14 @@ def train(sample, mode, **kwargs):
         print(f"Training {expname}...")
 
         epoch_end = epoch_start + kwargs["max_epoch"]
-        for epoch in tqdm.trange(epoch_start, epoch_end):
-            dataloader = gan.get_dataloader(
-                samplefiles,
-                keys=("state", "action", "reward", "next_state"),
-                shuffle=True,
-                batch_size=64
-            )
-
-            for data in tqdm.tqdm(dataloader, desc=f"Epoch {epoch}"):
+        dataloader = common.get_dataloader(
+            samplefiles,
+            keys=("state", "action", "reward", "next_state"),
+            shuffle=True,
+            batch_size=64
+        )
+        for epoch in trange(epoch_start, epoch_end):
+            for n, data in enumerate(tqdm(dataloader, desc=f"Epoch {epoch}")):
                 agent.set_input(data)
                 agent.train()
 
@@ -291,7 +372,7 @@ def test(path, mode, **kwargs):
             logger = logging.Logger(path="data/tmp.h5", max_len=500)
 
             dataloader = gan.get_dataloader(samplefiles, shuffle=False)
-            for i, (state, action) in enumerate(tqdm.tqdm(dataloader)):
+            for i, (state, action) in enumerate(tqdm(dataloader)):
                 fake_action = agent.get_action(state)
                 state, action = map(torch.squeeze, (state, action))
                 fake_action = fake_action.ravel()
@@ -331,7 +412,7 @@ def run(path, **kwargs):
 
         files = utils.parse_file(kwargs["out"])
         canvas = []
-        for file in tqdm.tqdm(files):
+        for file in tqdm(files):
             canvas = figures.plot_single(file, canvas=canvas)
 
         canvas.append(figures.train_plot(path))
@@ -370,7 +451,7 @@ def plot(path, mode, **kwargs):
     if mode == "sample":
         files = utils.parse_file(path)
         canvas = []
-        for file in tqdm.tqdm(files):
+        for file in tqdm(files):
             canvas = figures.plot_single(file, canvas=canvas)
     if mode == "hist":
         figures.plot_hist(path)
@@ -400,7 +481,7 @@ if __name__ == "__main__":
 
     # import matplotlib.pyplot as plt
 
-    # for x, u, nu in tqdm.tqdm(dataloader):
+    # for x, u, nu in tqdm(dataloader):
     #     plt.plot(x, (u - nu).numpy() / env.trim_u,
     #              ".", ms=2, mew=0, mfc=(0, 0, 0, 1))
 

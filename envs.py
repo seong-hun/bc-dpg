@@ -20,7 +20,7 @@ def quad_reward(x_trimmed, u_trimmed, Q, R):
     return x_trimmed.dot(Q).dot(x_trimmed) + u_trimmed.dot(R).dot(u_trimmed)
 
 
-class FixedParamEnv(fym.core.BaseEnv):
+class BaseEnv(fym.core.BaseEnv):
     """This Env takes the learnt policy when initialized,
     then simulates with the fixed policy."""
     Q = np.diag([1, 100, 10, 100]).astype(np.float)
@@ -36,58 +36,12 @@ class FixedParamEnv(fym.core.BaseEnv):
             },
             name="MorphingLon",
             eager_stop=self.stop_cond,
-            logger_callback=self.get_info,
             **kwargs
         )
         self.initial_perturb = initial_perturb
         self.trim_x, self.trim_u = self.system.get_trim()
         self.system.initial_state = self.trim_x + initial_perturb
         self.saturation = self.system.saturation
-
-    def get_action(self, t, x):
-        return self.trim_u
-
-    def set_inner_ctrl(self, inner_ctrl):
-        inner_ctrl.set_trim(self.trim_x, self.trim_u)
-        self.get_action = self.wrap_action(
-            inner_ctrl.get, self.system.saturation)
-
-    def get_info(self, i, t, y, t_hist, ode_hist):
-        ny = ode_hist[i + 1]
-        x, IR, nx, nIR = [
-            p[system.flat_index].reshape(system.state_shape)
-            for p in (y, ny)
-            for system in self.systems
-        ]
-        u = self.get_action(t, x)
-        reward = nIR - IR
-        return {
-            "time": t,
-            "state": x,
-            "action": u,
-            "reward": reward,
-            "next_state": nx
-        }
-
-    def wrap_action(self, get_action, saturation):
-        def wrap(*args, **kwargs):
-            return saturation(get_action(*args, **kwargs))
-        return wrap
-
-    def reset(self, mode=None):
-        super().reset()
-        if mode == "random":
-            self.system.state = (
-                self.trim_x
-                + self.initial_perturb
-                + [1, 0.05, 0.05, 0.05] * np.random.randn(4)
-            )
-
-    def step(self):
-        done = self.clock.time_over()
-        _, ode_hist, eager_done = self.update()
-        done = done or eager_done
-        return None, None, done, {}
 
     def stop_cond(self, t_hist, ode_hist):
         index = np.where(
@@ -96,39 +50,6 @@ class FixedParamEnv(fym.core.BaseEnv):
             return t_hist, ode_hist, False
         else:
             return t_hist[:index[0] + 1], ode_hist[:index[0] + 1], True
-
-    def set_dot(self, time):
-        x, _ = self.observe_list()
-        u = self.get_action(time, x)
-
-        self.system.dot = self.system.deriv(x, u)
-        self.systems_dict["IR"].dot = self.reward(x, u)
-
-    def reward(self, x, u):
-        x_trimmed = x - self.trim_x
-        u_trimmed = u - self.trim_u
-        return quad_reward(x_trimmed, u_trimmed, self.Q, self.R)
-
-
-class BaseEnv(FixedParamEnv):
-    def __init__(self, initial_perturb=[0, 0, 0, 0], phi_deg=1, **kwargs):
-        self.system = MorphingLon(initial_perturb)
-        self.IR_system = fym.core.BaseSystem(0, name="integral reward")
-        super().__init__(
-            systems_dict={
-                "main": self.system,
-                "IR": self.IR_system,
-            },
-            name="MorphingLon",
-            **kwargs
-        )
-
-        self.initial_perturb = initial_perturb
-        self.trim_x, self.trim_u = self.system.get_trim()
-        self.system.initial_state = self.trim_x + initial_perturb
-        self.saturation = self.system.saturation
-
-        self.poly_phi = PolynomialFeatures(degree=phi_deg, include_bias=False)
 
     def reset(self, initial_perturb=None):
         if initial_perturb == "random":
@@ -182,9 +103,71 @@ class BaseEnv(FixedParamEnv):
         self.system.dot = self.system.deriv(x, u)
         self.systems_dict["IR"].dot = self.reward(x_trimmed, u_trimmed)
 
-    def reward(self, x_trimmed, u_trimmed):
-        return (x_trimmed.dot(self.Q).dot(x_trimmed)
-                + u_trimmed.dot(self.R).dot(u_trimmed))
+
+class FixedParamEnv(BaseEnv):
+    def __init__(self, initial_perturb, **kwargs):
+        super().__init__(
+            initial_perturb,
+            **kwargs,
+            logger_callback=self.get_info,
+        )
+
+    def get_action(self, t, x):
+        return self.trim_u
+
+    def set_inner_ctrl(self, inner_ctrl):
+        inner_ctrl.set_trim(self.trim_x, self.trim_u)
+        self.get_action = self.wrap_action(
+            inner_ctrl.get, self.system.saturation)
+
+    def get_info(self, i, t, y, t_hist, ode_hist):
+        ny = ode_hist[i + 1]
+        x, IR, nx, nIR = [
+            p[system.flat_index].reshape(system.state_shape)
+            for p in (y, ny)
+            for system in self.systems
+        ]
+        u = self.get_action(t, x)
+        reward = nIR - IR
+        return {
+            "time": t,
+            "state": x,
+            "action": u,
+            "reward": reward,
+            "next_state": nx
+        }
+
+    def wrap_action(self, get_action, saturation):
+        def wrap(*args, **kwargs):
+            return saturation(get_action(*args, **kwargs))
+        return wrap
+
+    def reset(self, mode=None):
+        super().reset()
+        if mode == "random":
+            self.system.state = (
+                self.trim_x
+                + self.initial_perturb
+                + [1, 0.05, 0.05, 0.05] * np.random.randn(4)
+            )
+
+    def step(self):
+        done = self.clock.time_over()
+        _, ode_hist, eager_done = self.update()
+        done = done or eager_done
+        return None, None, done, {}
+
+    def set_dot(self, time):
+        x, _ = self.observe_list()
+        u = self.get_action(time, x)
+
+        self.system.dot = self.system.deriv(x, u)
+        self.systems_dict["IR"].dot = self.reward(x, u)
+
+    def reward(self, x, u):
+        x_trimmed = x - self.trim_x
+        u_trimmed = u - self.trim_u
+        return quad_reward(x_trimmed, u_trimmed, self.Q, self.R)
 
 
 if __name__ == "__main__":
