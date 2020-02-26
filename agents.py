@@ -56,105 +56,123 @@ class Linear(BaseInnerCtrl):
         self.noise.shape = self.theta.shape
 
 
-class BaseAgent:
-    """Generate trajectories of behavior policy"""
-    def __init__(self, env, theta_init):
-        self.name = "BaseAgent"
-
-        self.clock = env.clock
-        self.limits = np.vstack([
-            env.system.control_limits[k]
-            for k in ("delt", "dele", "eta1", "eta2")
-        ]).T
-        self.get_behavior = env.get_behavior
-        self.phi = env.phi
-
-        self.trim_x = env.trim_x
-        self.trim_u = env.trim_u
-        self.m = self.trim_u.size
-
-        self.n_phi = self.phi(self.trim_x).shape[1]
-        self.theta = theta_init * np.random.randn(self.n_phi, self.m)
-        self.noise = False
-
-    def add_noise(self, scale, tau):
-        self.noise = {"scale": scale, "tau": tau}
-
-    def get_action(self, obs):
-        if not self.noise:
-            return self.theta
-        else:
-            time = self.clock.get()
-            theta = self.theta + (
-                self.noise["scale"]
-                * np.exp(-time/self.noise["tau"])
-                * np.random.randn()
-            )
-            return theta
-
-
-class COPDAC(nn.Module):
-    "Compatible off-policy deterministic actor-critc"
-    def __init__(self, env, net_option, **kwargs):
+class BaseAgent(nn.Module, BaseInnerCtrl):
+    def __init__(self, env):
         super().__init__()
-        self.name = "COPDAC"
-
-        self.net_q = self.set_net(net_option, "net_q")
-        self.net_pi = self.set_net(net_option, "net_pi")
-
+        BaseInnerCtrl.__init__(self, env.trim_x.size, env.trim_u.size)
+        self.name = BaseAgent
         self.addons = []
+        self.info = {}
+        self.info["loss"] = {}
+        self.info["lr"] = {}
+
+    def get_name(self):
+        return "-".join((self.name, *sorted(self.addons)))
 
     def set_net(self, option, name):
-        opt = option[name]
-        return getattr(net, opt["class"])(**opt["option"])
+        net_class, net_option = list(option[name].items())[0]
+        return getattr(net, net_class)(**net_option)
 
     def set_input(self, data):
         self.data = data
-        # self.data = [np.array(d, dtype=np.float) for d in data]
 
-    def train(self):
+    def update(self):
+        raise NotImplementedError
+
+    def get_msg(self):
+        raise NotImplementedError
+
+    def load(self, path):
+        data = torch.load(path)
+        self.load_weights(data)
+        mode = "r+"
+        return int(data["epoch"] + 1), int(data["global_step"] + 1), mode
+
+    def save(self, epoch, global_step, path):
+        raise NotImplementedError
+
+    def load_weights(data):
+        raise NotImplementedError
+
+
+class OPDAC(BaseAgent):
+    "Off-policy deterministic actor-critc"
+    def __init__(self, env, net_option, **kwargs):
+        super().__init__(env)
+        self.net_q = self.set_net(net_option, "net_q")
+        self.net_pi = self.set_net(net_option, "net_pi")
+        self.name = "-".join([
+            "OPDAC",
+            self.net_q.__class__.__name__,
+            self.net_pi.__class__.__name__
+        ])
+
+    def get(self, t, x):
+        dx = (x - self.xtrim)[None, :]
+        return self.net_pi(dx)[0].detach().numpy() + self.utrim
+
+    def update(self):
         x, bu, reward, nx = self.data
 
         self.net_q.zero_grad()
-        us = self.net_pi(nx)
         with torch.no_grad():
+            bu = self.net_pi(x)
+            us = self.net_pi(nx)
             target = self.net_q(nx, us) + reward
-        loss = self.net_q.criterion(self.net_q(x, bu), target)
+        q = self.net_q(x, bu)
+        loss = self.net_q.criterion(q, target)
+
+        if "qzero" in self.addons:
+            qzero = self.net_q(torch.zeros_like(x), torch.zeros_like(bu))
+            loss += self.net_q.criterion(qzero, torch.zeros_like(qzero)) * 1e-2
+
         loss.backward()
         self.net_q.optimizer.step()
-        self.net_q.loss = loss.detach().numpy()
+        self.net_q.scheduler.step()
+
+        self.info["loss"]["delta"] = (target - q).mean().detach().numpy()
+        self.info["lr"]["net_q"] = self.net_q.scheduler.get_lr()[0]
 
         self.net_pi.zero_grad()
         us = self.net_pi(x)
         loss = self.net_q(x, us).mean()
         loss.backward()
         self.net_pi.optimizer.step()
-        self.net_pi.loss = loss.detach().numpy()
+
+    def save(self, epoch, global_step, path):
+        torch.save({
+            "epoch": epoch,
+            "global_step": global_step,
+            "state_dict": self.state_dict(),
+            "net_q_optim": self.net_q.optimizer.state_dict(),
+            "net_pi_optim": self.net_pi.optimizer.state_dict(),
+        }, path)
+
+    def load_weights(self, data):
+        self.load_state_dict(data["state_dict"])
+        self.net_q.optimizer.load_state_dict(data["net_q_optim"])
+        self.net_pi.optimizer.load_state_dict(data["net_pi_optim"])
 
     def get_msg(self):
-        return "\t".join([
-            f"{name} loss: {loss:5.4f}"
-            for name, loss in self.get_losses().items()
-        ])
+        loss_msg = [
+            f"{name} loss: {loss: 5.4f}"
+            for name, loss in self.info["loss"].items()]
+        lr_msg = [
+            f"{name} lr: {lr:5.4e}"
+            for name, lr in self.info["lr"].items()]
 
-    def get_name(self):
-        return "-".join((self.name, *sorted(self.addons)))
+        return "\t".join(loss_msg + lr_msg)
 
-    def load(self, path):
-        data = logging.load(path)
-        self.load_weights(data)
-        mode = "r+"
-        return int(data["epoch"][-1] + 1), int(data["i"][-1] + 1), mode
+    def set_addon(self, addon, *args, **kwargs):
+        self.addons.append(addon)
 
-    def get_losses(self):
-        loss = {name: module.loss for name, module in self.named_children()}
-        if "gan" in self.addons:
-            if self.gan_type == "d":
-                loss.update(gan=self.gan_loss.detach().numpy())
-            elif self.gan_type == "g":
-                loss.update(gan=self.gan_loss)
-        return loss
 
+class BCAgent(BaseAgent):
+    def __init__(self, env):
+        super().__init__(env)
+
+
+class A:
     def set(self):
         # Learning rates
         self.lrw = lrw
@@ -224,11 +242,6 @@ class COPDAC(nn.Module):
 
             if "dual_Q" in self.addons:
                 self.QNet.optimizer.step()
-
-    def load_weights(self, data):
-        self.theta = data["theta"][-1]
-        self.w = data["w"][-1]
-        self.v = data["v"][-1]
 
     def in_bound(self, theta):
         x = self.data[0]
@@ -300,15 +313,8 @@ class COPDAC(nn.Module):
         poly = self.poly_phi.fit_transform(np.atleast_2d(x_trimmed))
         return poly
 
-    def get(self, theta, x_trimmed):
-        """output: trimmed and saturated u"""
-        assert np.ndim(x_trimmed) == 2, "dim(x) = (batch, size_x)"
-        u_trimmed = self.phi(x_trimmed).dot(theta)
-        # return self.saturation(self.trim_u + u_trimmed) - self.trim_u
-        return u_trimmed
 
-
-class RegCOPDAC(COPDAC):
+class RegCOPDAC(OPDAC):
     "Regulated compatible off-policy deterministic actor-critc"
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -327,6 +333,6 @@ if __name__ == "__main__":
 
     env = envs.FixedParamEnv(
         **{**PARAMS["sample"]["FixedParamEnv"], "logging_off": True})
-    agent = COPDAC(
-        **PARAMS["train"]["COPDAC"]
+    agent = OPDAC(
+        env, **PARAMS["train"]["COPDAC"]
     )

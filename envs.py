@@ -44,22 +44,25 @@ class BaseEnv(fym.core.BaseEnv):
         self.saturation = self.system.saturation
 
     def stop_cond(self, t_hist, ode_hist):
-        index = np.where(
-            np.any(np.abs(ode_hist[:, (1, 3)]) > np.deg2rad(30), axis=1))[0]
+        index = np.where(np.any(
+            np.abs(ode_hist[:, (1, 3)]) > np.deg2rad(30),
+            axis=1
+        ))[0]
+
         if index.size == 0:
             return t_hist, ode_hist, False
         else:
             return t_hist[:index[0] + 1], ode_hist[:index[0] + 1], True
 
-    def reset(self, initial_perturb=None):
-        if initial_perturb == "random":
+    def reset(self, mode=None):
+        super().reset()
+        if mode == "random":
             self.system.initial_state = (
                 self.trim_x
                 + self.initial_perturb
                 + [1, 0.05, 0.05, 0.05] * np.random.randn(4)
             )
 
-        super().reset()
         return self.observation()
 
     def observation(self):
@@ -103,22 +106,29 @@ class BaseEnv(fym.core.BaseEnv):
         self.system.dot = self.system.deriv(x, u)
         self.systems_dict["IR"].dot = self.reward(x_trimmed, u_trimmed)
 
+    def set_inner_ctrl(self, inner_ctrl):
+        inner_ctrl.set_trim(self.trim_x, self.trim_u)
+        self.get_action = self.wrap_action(
+            inner_ctrl.get, self.system.saturation)
+
+    def wrap_action(self, get_action, saturation):
+        def wrap(*args, **kwargs):
+            return saturation(get_action(*args, **kwargs))
+        return wrap
+
 
 class FixedParamEnv(BaseEnv):
     def __init__(self, initial_perturb, **kwargs):
         super().__init__(
             initial_perturb,
             **kwargs,
-            logger_callback=self.get_info,
         )
+
+    def set_logger_callback(self, func=None):
+        self.logger_callback = func or self.get_info
 
     def get_action(self, t, x):
         return self.trim_u
-
-    def set_inner_ctrl(self, inner_ctrl):
-        inner_ctrl.set_trim(self.trim_x, self.trim_u)
-        self.get_action = self.wrap_action(
-            inner_ctrl.get, self.system.saturation)
 
     def get_info(self, i, t, y, t_hist, ode_hist):
         ny = ode_hist[i + 1]
@@ -137,24 +147,9 @@ class FixedParamEnv(BaseEnv):
             "next_state": nx
         }
 
-    def wrap_action(self, get_action, saturation):
-        def wrap(*args, **kwargs):
-            return saturation(get_action(*args, **kwargs))
-        return wrap
-
-    def reset(self, mode=None):
-        super().reset()
-        if mode == "random":
-            self.system.state = (
-                self.trim_x
-                + self.initial_perturb
-                + [1, 0.05, 0.05, 0.05] * np.random.randn(4)
-            )
-
     def step(self):
-        done = self.clock.time_over()
         _, ode_hist, eager_done = self.update()
-        done = done or eager_done
+        done = self.clock.time_over() or eager_done
         return None, None, done, {}
 
     def set_dot(self, time):

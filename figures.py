@@ -98,7 +98,6 @@ def plot_mult(dataset, color_cycle=None, names=None):
 
 def train_plot(savepath, **kwargs):
     data = logging.load(savepath)
-    epoch = data["i"]
 
     canvas = []
     fig, axes = plt.subplots(2, 2, sharex=True, num="hist")
@@ -111,7 +110,7 @@ def train_plot(savepath, **kwargs):
     canvas.append((fig, axes))
 
     fig, axes = canvas[0]
-    epoch = data["i"]
+    epoch = data["global_step"]
     axes[0, 0].plot(
         epoch,
         data["loss"]["delta"].reshape(-1, data["loss"]["delta"][0].size),
@@ -123,22 +122,27 @@ def train_plot(savepath, **kwargs):
             data["loss"]["gan"].reshape(-1, data["loss"]["gan"][0].size),
             **kwargs
         )
-    axes[1, 0].plot(
-        epoch,
-        data["w"].reshape(-1, data["w"][0].size),
-        **kwargs
-    )
-    axes[1, 0].plot(
-        epoch,
-        data["v"].reshape(-1, data["v"][0].size),
-        **kwargs
-    )
-    ln, *_ = axes[1, 1].plot(
-        epoch,
-        data["theta"].reshape(
-            -1, np.multiply(*data["theta"][0].shape)),
-        **kwargs
-    )
+
+    theta = []
+    for k, v in data["state_dict"].items():
+        if k.startswith("net_pi") and k.endswith("weight"):
+            theta.append(v.reshape(-1, v[0].size))
+    theta = np.hstack(theta)
+    theta = np.diff(theta, axis=0)
+
+    axes[1, 1].plot(epoch[:-1], theta, **kwargs)
+
+    # axes[1, 0].plot(
+    #     epoch,
+    #     data["v"].reshape(-1, data["v"][0].size),
+    #     **kwargs
+    # )
+    # ln, *_ = axes[1, 1].plot(
+    #     epoch,
+    #     data["theta"].reshape(
+    #         -1, np.multiply(*data["theta"][0].shape)),
+    #     **kwargs
+    # )
     fig.tight_layout()
 
 

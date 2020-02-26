@@ -2,10 +2,12 @@ import click
 import numpy as np
 from tqdm import tqdm, trange
 import os
+import shutil
 import glob
 import time
 import functools
 from concurrent.futures import ProcessPoolExecutor
+import copy
 
 import torch
 import torch.multiprocessing as mp
@@ -33,45 +35,17 @@ PARAMS = {
             "solver": "odeint",
             "dt": 40,
             "ode_step_len": 1000,
-            "logging_off": False
+            "logging_off": False,
         },
-    },
-    "BaseEnv": {
-        "phi_deg": 1,
-        "dt": 0.01,
-        "max_t": 20,
-        "solver": "rk4",
-        "ode_step_len": 1,
-    },
-    "GAN": {
-        "x_size": 4,
-        "u_size": 4,
-        "z_size": 100,
-        "lr": 2e-4,
     },
     "train": {
         "batch_size": 64,
         "max_epoch": 10,
         "print_interval": 30,
-        "COPDAC": {
+        "OPDAC": {
             "net_option": {
-                "net_q": {
-                    "class": "QNet",
-                    "option": {
-                        "x_size": 4,
-                        "u_size": 4,
-                        "lr": 1e-3,
-                    },
-                },
-                "net_pi": {
-                    "class": "PolyNet",
-                    "option": {
-                        "x_size": 4,
-                        "u_size": 4,
-                        "lr": 1e-4,
-                        "degree": 1,
-                    },
-                },
+                "net_q": {},
+                "net_pi": {},
             },
             "lrw": 1e-2,
             "lrv": 1e-2,
@@ -81,6 +55,37 @@ PARAMS = {
             "theta_init": 0,
             "v_deg": 2,
         },
+    },
+    "run": {
+        "FixedParamEnv": {
+            "initial_perturb": [0, 0, 0, np.deg2rad(5)],
+            "max_t": 100,
+            "solver": "rk4",
+            "dt": 0.01,
+            "ode_step_len": 1,
+            "logging_off": False,
+        },
+    },
+    "GAN": {
+        "x_size": 4,
+        "u_size": 4,
+        "z_size": 100,
+        "lr": 2e-4,
+    },
+    "nets": {
+        "QNet": {
+            "x_size": 4,
+            "u_size": 4,
+            "lr": 1e-4,
+            "gamma": 0.999,
+        },
+        "PolyNet": {
+            "x_size": 4,
+            "u_size": 4,
+            "lr": 1e-4,
+            "degree": 2,
+        },
+
     },
     "addons": {
         "reg": {
@@ -136,6 +141,7 @@ def _sample_prog(i, log_dir):
     ou_noise = common.OuNoise(**param)
     behavior.add_noise(ou_noise)
     env.set_inner_ctrl(behavior)
+    env.set_logger_callback()
     env.reset("random")
 
     while True:
@@ -157,6 +163,8 @@ def _sample_prog(i, log_dir):
 @click.option("--all", "mode", flag_value="all", default=True)
 @click.option("--gan", "mode", flag_value="gan")
 @click.option("--copdac", "mode", flag_value="copdac")
+@click.option("--agent", default="OPDAC")
+@click.option("--with", type=click.Choice(["qzero"]))
 @click.option("--gan-type", default="g", type=click.Choice(["d", "g"]))
 @click.option("--gan-lr", default=PARAMS["GAN"]["lr"])
 @click.option("--use-cuda", is_flag=True)
@@ -164,7 +172,6 @@ def _sample_prog(i, log_dir):
 @click.option("--copdac-dir", default="data/copdac")
 @click.option("--continue", "-c", nargs=1, type=click.Path(exists=True))
 @click.option("--max-epoch", "-n", default=100)
-@click.option("--save-interval", "-s", default=10)
 @click.option("--batch-size", "-b", default=64)
 @click.option("--with-reg", is_flag=True)
 @click.option("--with-const", is_flag=True)
@@ -226,28 +233,35 @@ def train(sample, mode, **kwargs):
     if mode == "copdac" or mode == "all":
         np.random.seed(kwargs["seed"])
 
-        envparams = {
-            **PARAMS["sample"]["FixedParamEnv"],
-            "logging_off": True
-        }
+        envparams = PARAMS["sample"]["FixedParamEnv"]
+        envparams["logging_off"] = True
         env = envs.FixedParamEnv(**envparams)
-        agent = agents.COPDAC(env, **PARAMS["train"]["COPDAC"])
+
+        agentclass = kwargs["agent"]
+        agentparams = PARAMS["train"][agentclass]
+        agentparams["net_option"]["net_q"] = {
+            "QNet": PARAMS["nets"]["QNet"]}
+        agentparams["net_option"]["net_pi"] = {
+            "PolyNet": PARAMS["nets"]["PolyNet"]}
+        agent = getattr(agents, agentclass)(env, **agentparams)
+
+        if "qzero" in kwargs["with"]:
+            agent.set_addon("qzero")
 
         expname = "-".join((env.name, agent.get_name()))
-        histpath = os.path.join(kwargs["copdac_dir"], expname + ".h5")
+        expdir = os.path.join(kwargs["copdac_dir"], expname)
+        histpath = os.path.join(expdir, "hist.h5")
 
         if kwargs["continue"] is not None:
             epoch_init, global_step, mode = agent.load(kwargs["continue"])
         else:
+            if os.path.exists(expdir):
+                if input(f"Delete \"{expdir}\"? [Y/n]: ") in ["", "Y", "y"]:
+                    shutil.rmtree(expdir)
+
             epoch_init, global_step, mode = 0, 0, "w"
 
         logger = logging.Logger(path=histpath, max_len=100, mode=mode)
-        logger.set_info(
-            env=env.__class__.__name__,
-            agent=agent.__class__.__name__,
-            PARAMS=PARAMS,
-            click=kwargs,
-        )
 
         print(f"Training {expname} ...")
 
@@ -262,11 +276,16 @@ def train(sample, mode, **kwargs):
             transform=trimming
         )
 
-        for epoch in trange(epoch_init, epoch_init + kwargs["max_epoch"]):
-            for n, data in enumerate(tqdm(
-                    dataloader, desc=f"Epoch {epoch}", leave=False)):
+        max_global = kwargs["max_epoch"] * len(dataloader)
+        logging_interval = int(1e-2 * max_global) or 1
+        save_interval = int(1e-1 * max_global) or 1
+
+        epoch_final = epoch_init + kwargs["max_epoch"]
+        for epoch in range(epoch_init, epoch_final):
+            desc = f"Epoch {epoch:2d}/{epoch_final - 1:2d}"
+            for n, data in enumerate(tqdm(dataloader, desc=desc, leave=False)):
                 agent.set_input(data)
-                agent.train()
+                agent.update()
 
                 if global_step % PARAMS["train"]["print_interval"] == 0:
                     msg = "\t".join([
@@ -275,77 +294,32 @@ def train(sample, mode, **kwargs):
                     ])
                     tqdm.write(msg)
 
-                if (global_step % kwargs["save_interval"] == 0
+                if (global_step % logging_interval == 0
                         or global_step == len(dataloader)):
                     logger.record(
                         epoch=epoch,
                         global_step=global_step,
-                        state_dict=agent.state_dict(),
-                        loss=agent.get_losses()
+                        state_dict=copy.deepcopy(agent.state_dict()),
+                        loss=agent.info["loss"]
                     )
+
+                if (global_step % save_interval == 0
+                        or global_step == len(dataloader)):
+                    savepath = os.path.join(expdir,
+                                            f"trained-{global_step:07d}.pth")
+                    agent.save(epoch, global_step, savepath)
+
                 global_step += 1
-
-        logger.close()
-        return
-
-        # Add-ons
-        if kwargs["with_gan"]:
-            agent.set_gan(
-                kwargs["with_gan"],
-                **PARAMS["addons"]["GAN"],
-                gan_type=kwargs["gan_type"],
-            )
-
-        if kwargs["with_reg"]:
-            agent.set_reg(**PARAMS["addons"]["reg"])
-
-        if kwargs["with_const"]:
-            agent.set_const(**PARAMS["addons"]["const"])
-
-        copdacdir = kwargs["copdac_dir"]
-        expname = "-".join((env.name, agent.get_name()))
-        histpath = os.path.join(copdacdir, expname + ".h5")
-
-        if kwargs["continue"] is not None:
-            epoch_start, i = agent.load(kwargs["continue"])
-            logger = logging.Logger(path=histpath, max_len=100, mode="r+")
-        else:
-            epoch_start, i = 0, 0
-            logger = logging.Logger(path=histpath, max_len=100)
 
         logger.set_info(
             env=env.__class__.__name__,
             agent=agent.__class__.__name__,
+            expname=expname,
+            envparams=envparams,
+            agentparams=agentparams,
             PARAMS=PARAMS,
             click=kwargs,
         )
-
-        print(f"Training {expname}...")
-
-        epoch_end = epoch_start + kwargs["max_epoch"]
-        dataloader = common.get_dataloader(
-            samplefiles,
-            keys=("state", "action", "reward", "next_state"),
-            shuffle=True,
-            batch_size=64
-        )
-        for epoch in trange(epoch_start, epoch_end):
-            for n, data in enumerate(tqdm(dataloader, desc=f"Epoch {epoch}")):
-                agent.set_input(data)
-                agent.train()
-
-                if i % kwargs["save_interval"] == 0 or i == len(dataloader):
-                    logger.record(
-                        epoch=epoch,
-                        i=i,
-                        w=agent.w,
-                        v=agent.v,
-                        theta=agent.theta,
-                        loss=agent.get_losses()
-                    )
-
-                i += 1
-
         logger.close()
 
 
@@ -385,27 +359,37 @@ def test(path, mode, **kwargs):
 
 
 @main.command()
-@click.argument("path", nargs=1, type=click.Path(exists=True))
+@click.argument("histpath", nargs=1, type=click.Path(exists=True))
 @click.option("--out", "-o", default="data/run.h5")
 @click.option("--with-plot", "-p", is_flag=True)
-def run(path, **kwargs):
-    data, info = logging.load(path, with_info=True)
+def run(histpath, **kwargs):
+    data, info = logging.load(histpath, with_info=True)
+    expdir = os.path.dirname(histpath)
+    weightpath = sorted(glob.glob(os.path.join(expdir, "*.pth")))[-1]
+    weight = torch.load(weightpath)
 
-    env = getattr(envs, info["env"])(
-        initial_perturb=[0, 0.0, 0, np.deg2rad(10)],
-        **info["PARAMS"]["BaseEnv"])
-    agent = getattr(agents, info["agent"])(env, **info["PARAMS"]["COPDAC"])
-    agent.load_weights(data)
+    envparams = PARAMS["run"][info["env"]]
+    envparams["logging_path"] = kwargs["out"]
+    env = getattr(envs, info["env"])(**envparams)
 
-    expname = os.path.splitext(os.path.basename(path))[0]
+    agent = getattr(agents, info["agent"])(env, **info["agentparams"])
+    agent.load_weights(weight)
+    agent.eval()
 
-    print(f"Runnning {expname} ...")
+    env.set_logger_callback()
+    env.set_inner_ctrl(agent)
 
-    logger = logging.Logger(path=kwargs["out"], max_len=100)
+    print(f"Runnning {info['expname']} ...")
 
-    _run(env, agent, logger, expname, **kwargs)
+    env.reset()
+    while True:
+        env.render()
+        _, _, done, info = env.step()
 
-    logger.close()
+        if done:
+            break
+
+    env.close()
 
     if kwargs["with_plot"]:
         import figures
@@ -415,28 +399,9 @@ def run(path, **kwargs):
         for file in tqdm(files):
             canvas = figures.plot_single(file, canvas=canvas)
 
-        canvas.append(figures.train_plot(path))
+        canvas.append(figures.train_plot(histpath))
 
         figures.show()
-
-
-def _run(env, agent, logger, expname, **kwargs):
-    obs = env.reset()
-    while True:
-        env.render()
-
-        action = agent.get_action(obs)
-        next_obs, reward, done, info = env.step(action)
-
-        logger.record(**info)
-
-        obs = next_obs
-
-        if done:
-            break
-
-    env.close()
-    return logger.path
 
 
 @main.command()
