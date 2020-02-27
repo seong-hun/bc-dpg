@@ -66,26 +66,26 @@ PARAMS = {
             "logging_off": False,
         },
     },
-    "GAN": {
-        "x_size": 4,
-        "u_size": 4,
-        "z_size": 100,
-        "lr": 2e-4,
-    },
     "nets": {
         "QNet": {
             "x_size": 4,
             "u_size": 4,
             "lr": 1e-4,
-            "gamma": 0.999,
+            "gamma": 0.9999,
         },
         "PolyNet": {
             "x_size": 4,
             "u_size": 4,
-            "lr": 1e-4,
+            "lr": 1e-5,
             "degree": 2,
         },
 
+    },
+    "GAN": {
+        "x_size": 4,
+        "u_size": 4,
+        "z_size": 100,
+        "lr": 2e-4,
     },
     "addons": {
         "reg": {
@@ -261,7 +261,16 @@ def train(sample, mode, **kwargs):
 
             epoch_init, global_step, mode = 0, 0, "w"
 
-        logger = logging.Logger(path=histpath, max_len=100, mode=mode)
+        logger = logging.Logger(path=histpath, max_len=1, mode=mode)
+        logger.set_info(
+            env=env.__class__.__name__,
+            agent=agent.__class__.__name__,
+            expname=expname,
+            envparams=envparams,
+            agentparams=agentparams,
+            PARAMS=PARAMS,
+            click=kwargs,
+        )
 
         print(f"Training {expname} ...")
 
@@ -281,6 +290,7 @@ def train(sample, mode, **kwargs):
         save_interval = int(1e-1 * max_global) or 1
 
         epoch_final = epoch_init + kwargs["max_epoch"]
+        t0 = time.time()
         for epoch in range(epoch_init, epoch_final):
             desc = f"Epoch {epoch:2d}/{epoch_final - 1:2d}"
             for n, data in enumerate(tqdm(dataloader, desc=desc, leave=False)):
@@ -302,6 +312,7 @@ def train(sample, mode, **kwargs):
                         state_dict=copy.deepcopy(agent.state_dict()),
                         loss=agent.info["loss"]
                     )
+                    tqdm.write("Recorded")
 
                 if (global_step % save_interval == 0
                         or global_step == len(dataloader)):
@@ -311,51 +322,10 @@ def train(sample, mode, **kwargs):
 
                 global_step += 1
 
-        logger.set_info(
-            env=env.__class__.__name__,
-            agent=agent.__class__.__name__,
-            expname=expname,
-            envparams=envparams,
-            agentparams=agentparams,
-            PARAMS=PARAMS,
-            click=kwargs,
-        )
         logger.close()
 
-
-@main.command()
-@click.argument("path", nargs=-1, type=click.Path())
-@click.option("--hist", "mode", flag_value="hist")
-@click.option("--gan", "mode", flag_value="gan")
-@click.option("--samples", type=click.Path(), default="data/samples")
-def test(path, mode, **kwargs):
-    if mode == "gan":
-        samplefiles = utils.parse_file([kwargs["samples"]], ext="h5")
-        trainfiles = utils.parse_file(path, ext="pth")
-        agent = gan.GAN(
-            lr=PARAMS["GAN"]["lr"],
-            x_size=PARAMS["GAN"]["x_size"],
-            u_size=PARAMS["GAN"]["u_size"],
-            z_size=PARAMS["GAN"]["z_size"],
-        )
-
-        for trainfile in trainfiles:
-            agent.load(trainfile)
-            agent.eval()
-
-            logger = logging.Logger(path="data/tmp.h5", max_len=500)
-
-            dataloader = gan.get_dataloader(samplefiles, shuffle=False)
-            for i, (state, action) in enumerate(tqdm(dataloader)):
-                fake_action = agent.get_action(state)
-                state, action = map(torch.squeeze, (state, action))
-                fake_action = fake_action.ravel()
-                logger.record(
-                    state=state, action=action, fake_action=fake_action)
-
-            logger.close()
-
-            print(f"Test data is saved in {logger.path}")
+        print(f"Elapsed time: {time.time() - t0:5.2f} sec")
+        print(f"Exp. saved in \"{expdir}\"")
 
 
 @main.command()
@@ -402,6 +372,41 @@ def run(histpath, **kwargs):
         canvas.append(figures.train_plot(histpath))
 
         figures.show()
+
+
+@main.command()
+@click.argument("path", nargs=-1, type=click.Path())
+@click.option("--hist", "mode", flag_value="hist")
+@click.option("--gan", "mode", flag_value="gan")
+@click.option("--samples", type=click.Path(), default="data/samples")
+def test(path, mode, **kwargs):
+    if mode == "gan":
+        samplefiles = utils.parse_file([kwargs["samples"]], ext="h5")
+        trainfiles = utils.parse_file(path, ext="pth")
+        agent = gan.GAN(
+            lr=PARAMS["GAN"]["lr"],
+            x_size=PARAMS["GAN"]["x_size"],
+            u_size=PARAMS["GAN"]["u_size"],
+            z_size=PARAMS["GAN"]["z_size"],
+        )
+
+        for trainfile in trainfiles:
+            agent.load(trainfile)
+            agent.eval()
+
+            logger = logging.Logger(path="data/tmp.h5", max_len=500)
+
+            dataloader = gan.get_dataloader(samplefiles, shuffle=False)
+            for i, (state, action) in enumerate(tqdm(dataloader)):
+                fake_action = agent.get_action(state)
+                state, action = map(torch.squeeze, (state, action))
+                fake_action = fake_action.ravel()
+                logger.record(
+                    state=state, action=action, fake_action=fake_action)
+
+            logger.close()
+
+            print(f"Test data is saved in {logger.path}")
 
 
 @main.command()
